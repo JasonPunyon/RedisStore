@@ -27,13 +27,19 @@ namespace RedisStore
         SomeClass SomeClass { get; set; }
         SomeOtherClass SomeOtherClass{ get; set; }
     }
+    public interface IUserTicket
+    {
+        string Id { get; set; }
+        int UserId { get; set; }
+    }
 
     [TestFixture]
     public class Tests
     {
         static Store GetStore()
         {
-            var redis = ConnectionMultiplexer.Connect("localhost:6379");
+            var redis = ConnectionMultiplexer.Connect("localhost:6379,allowAdmin=true");
+            redis.GetServer(redis.GetEndPoints()[0]).FlushDatabase(0);
             return new Store(redis);
         }
 
@@ -106,6 +112,84 @@ namespace RedisStore
 
             user.Pointses = -1000L;
             Assert.AreEqual(-1000L, user.Pointses);
+        }
+
+        [Test]
+        public void CreatingWithAndIntIdWorks()
+        {
+            var s = GetStore();
+            var user = s.Create<IUser>();
+            Assert.AreEqual(1, user.Id);
+            user = s.Create<IUser>();
+            Assert.AreEqual(2, user.Id);
+            user = s.Create<IUser>();
+            Assert.AreEqual(3, user.Id);
+        }
+
+        [Test]
+        public void EnumerateWorks()
+        {
+            var s = GetStore();
+            s.Create<IUser>();
+            s.Create<IUser>();
+            s.Create<IUser>();
+
+            var users = s.Enumerate<IUser>().ToList();
+
+            Assert.AreEqual(3, users.Count);
+
+            Assert.AreEqual(1, users[0].Id);
+            Assert.AreEqual(2, users[1].Id);
+            Assert.AreEqual(3, users[2].Id);
+        }
+
+        [Test]
+        public void StringId()
+        {
+            var s = GetStore();
+            s.Create<IUserTicket>();
+        }
+
+        [Test]
+        public void UncreatedUserDoesNotExist()
+        {
+            var s = GetStore();
+            Assert.False(s.Exists<IUser>(1));
+        }
+
+        [Test]
+        public void CreatedUserDoesExist()
+        {
+            var s = GetStore();
+            var user = s.Create<IUser>();
+            Assert.True(s.Exists<IUser>(user.Id));
+
+            for (var i = 0; i < 10; i++)
+            {
+                Assert.True(s.Exists<IUser>(s.Create<IUser>().Id));
+            }
+        }
+
+        [Test]
+        public void DeletedUserDoesNotExist()
+        {
+            var s = GetStore();
+            var user = s.Create<IUser>();
+            s.Delete(user);
+
+            Assert.False(s.Exists<IUser>(user.Id));
+        }
+
+        [Test]
+        public void DeletedDoesNotExistOnEnumerate()
+        {
+            var s = GetStore();
+            var user = s.Create<IUser>();
+            var user2 = s.Create<IUser>();
+
+            s.Delete(user);
+
+            Assert.False(s.Enumerate<IUser>().Any(u => u.Id == user.Id));
         }
     }
 }
