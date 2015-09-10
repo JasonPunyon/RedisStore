@@ -55,7 +55,7 @@ namespace RedisStore
     }
 
     [SuppressMessage("ReSharper", "StaticMemberInGenericType")]
-    static class TypeImplementer<TInterface>
+    static class Implementer<TInterface>
     {
         public static Func<IDatabase, TInterface> Create;
         public static Func<IDatabase, IEnumerable<TInterface>> Enumerate;
@@ -65,12 +65,12 @@ namespace RedisStore
          
         static readonly string TypeName;
         static readonly Dictionary<string, PropertyImplementationInfo> Properties;
-        private static readonly MethodInfo StringToRedisKey = typeof (RedisKey).GetMethod("op_Implicit", new[] {typeof (string)});
+        static readonly MethodInfo StringToRedisKey = typeof (RedisKey).GetMethod("op_Implicit", new[] {typeof (string)});
         static MethodAttributes MethodAttributes => MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.SpecialName | MethodAttributes.NewSlot | MethodAttributes.HideBySig;
 
-        private static MethodInfo StringDotFormat => typeof(string).GetMethod("Format", new[] { typeof(string), typeof(object) });
+        static MethodInfo StringDotFormat => typeof(string).GetMethod("Format", new[] { typeof(string), typeof(object) });
 
-        static TypeImplementer()
+        static Implementer()
         {
             var type = typeof(TInterface);
 
@@ -551,22 +551,13 @@ namespace RedisStore
         }
     }
 
-    public class Store
+    public static class ConnectionMultiplexerExtensions
     {
-        readonly ConnectionMultiplexer _redisConn;
-        private readonly IDatabase _redisDatabase;
-
-        public Store(ConnectionMultiplexer redisConn)
-        {
-            _redisConn = redisConn;
-            _redisDatabase = redisConn.GetDatabase();
-        }
-
-        public T Create<T>()
+        public static T Create<T>(this ConnectionMultiplexer con)
         {
             try
             {
-                return TypeImplementer<T>.Create(_redisDatabase);
+                return Implementer<T>.Create(con.GetDatabase());
             }
             catch (TypeInitializationException ex)
             {
@@ -574,25 +565,24 @@ namespace RedisStore
             }
         }
 
-        public IEnumerable<T> Enumerate<T>()
+        public static bool Exists<T>(this ConnectionMultiplexer con, object id)
         {
-            return TypeImplementer<T>.Enumerate(_redisDatabase);
+            return Implementer<T>.Exists(con.GetDatabase(), id);
         }
 
-        public T Get<T>(object id)
+        public static T Get<T>(this ConnectionMultiplexer con, object id)
         {
-            return TypeImplementer<T>.Get(_redisDatabase, id);
+            return Implementer<T>.Get(con.GetDatabase(), id);
         }
 
-        public bool Exists<T>(object id)
+        public static IEnumerable<T> Enumerate<T>(this ConnectionMultiplexer con)
         {
-            return TypeImplementer<T>.Exists(_redisDatabase, id);
+            return Implementer<T>.Enumerate(con.GetDatabase());
         }
 
-        internal bool Delete<T>(T obj)
+        internal static bool Delete<T>(this ConnectionMultiplexer con, T toDelete)
         {
-            //return TypeImplementer<T>.Delete(_redisDatabase, obj);
-            throw new NotImplementedException();
+            return Implementer<T>.Delete(con.GetDatabase(), toDelete);
         }
     }
 }

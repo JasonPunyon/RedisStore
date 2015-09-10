@@ -36,11 +36,11 @@ namespace RedisStore
     [TestFixture]
     public class Tests
     {
-        static Store GetStore()
+        static ConnectionMultiplexer GetStore()
         {
             var redis = ConnectionMultiplexer.Connect("localhost:6379,allowAdmin=true");
             redis.GetServer(redis.GetEndPoints()[0]).FlushDatabase(0);
-            return new Store(redis);
+            return redis;
         }
 
         [Test]
