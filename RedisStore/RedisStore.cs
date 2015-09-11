@@ -11,49 +11,6 @@ using StackExchange.Redis;
 
 namespace RedisStore
 {
-    public class NoIdPropertyException : Exception
-    {
-        public Type Type { get; set; }
-
-        public override string Message => $"Add an Id property to {Type.Name} in order to use it with RedisStore.";
-
-        public NoIdPropertyException(Type type)
-        {
-            Type = type;
-        }
-    }
-
-    public class NotAnInterfaceException : Exception
-    {
-        public Type Type { get; set; }
-
-        public override string Message => $"{Type.Name} cannot be used with Rapper because it isn't an interface.";
-
-        public NotAnInterfaceException(Type type)
-        {
-            Type = type;
-        }
-    }
-
-    public class InvalidPropertyTypeException : Exception
-    {
-        private readonly PropertyImplementationInfo _propInfo;
-
-        public override string Message => $"{_propInfo.DeclaringType.Name}.{_propInfo.Name} has an invalid type. {ShittyGlobalClass.ValidTypeList}";
-
-        internal InvalidPropertyTypeException(PropertyImplementationInfo propInfo)
-        {
-            _propInfo = propInfo;
-        }
-    }
-
-    static class ShittyGlobalClass
-    {
-        public static List<Type> ValidPropertyTypes => typeof (RedisValue).GetMethods().Where(o => o.Name.In("op_Explicit", "op_Implicit") && o.GetParameters()[0].ParameterType == typeof (RedisValue)).Select(p => p.ReturnType).ToList();
-
-        public static string ValidTypeList => $"Valid types are: {string.Join(",", ValidPropertyTypes.Select(o => o.IsGenericType && o.GetGenericTypeDefinition() == (typeof(Nullable<>)) ? o.GenericTypeArguments[0].Name + "?" : o.Name).OrderBy(o => o))}";
-    }
-
     [SuppressMessage("ReSharper", "StaticMemberInGenericType")]
     static class Implementer<TInterface>
     {
@@ -62,36 +19,35 @@ namespace RedisStore
         public static Func<IDatabase, object, TInterface> Get;
         public static Func<IDatabase, object, bool> Exists;
         public static Func<IDatabase, TInterface, bool> Delete;
-         
+
+        private static readonly Type Type = typeof(TInterface);
         static readonly string TypeName;
         static readonly Dictionary<string, PropertyImplementationInfo> Properties;
         static readonly MethodInfo StringToRedisKey = typeof (RedisKey).GetMethod("op_Implicit", new[] {typeof (string)});
-        static MethodAttributes MethodAttributes => MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.SpecialName | MethodAttributes.NewSlot | MethodAttributes.HideBySig;
-
-        static MethodInfo StringDotFormat => typeof(string).GetMethod("Format", new[] { typeof(string), typeof(object) });
+        static readonly MethodAttributes MethodAttributes = MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.SpecialName | MethodAttributes.NewSlot | MethodAttributes.HideBySig;
+        static readonly MethodInfo StringDotFormat = typeof(string).GetMethod("Format", new[] { typeof(string), typeof(object) });
+        private static MethodInfo IDatabaseStringSet = typeof(IDatabase).GetMethod("StringSet", new[] { typeof(RedisKey), typeof(RedisValue), typeof(TimeSpan?), typeof(When), typeof(CommandFlags) });
 
         static Implementer()
         {
-            var type = typeof(TInterface);
-
-            if (!type.IsInterface)
+            if (!Type.IsInterface)
             {
-                throw new NotAnInterfaceException(typeof(TInterface));
+                throw new NotAnInterfaceException(Type);
             }
 
-            if (!type.GetProperties().Any(o => o.Name == "Id"))
+            if (!Type.GetProperties().Any(o => o.Name == "Id"))
             {
-                throw new NoIdPropertyException(typeof(TInterface));
+                throw new NoIdPropertyException(Type);
             }
 
-            Properties = type
+            Properties = Type
                 .GetProperties()
                 .Select(p => new PropertyImplementationInfo
                 {
-                    DeclaringType = typeof(TInterface),
+                    DeclaringType = Type,
                     Name = p.Name,
                     PropertyType = p.PropertyType,
-                    RedisKeyFormat = $"/{typeof(TInterface).Name}/{{0}}/{p.Name}"
+                    RedisKeyFormat = $"/{Type.Name}/{{0}}/{p.Name}"
                 }).ToDictionary(o => o.Name);
 
             var propsWithInvalidTypes = Properties.Where(p => !ShittyGlobalClass.ValidPropertyTypes.Contains(p.Value.PropertyType)).ToList();
@@ -100,7 +56,7 @@ namespace RedisStore
                 throw new AggregateException(propsWithInvalidTypes.Select(p => new InvalidPropertyTypeException(p.Value)));
             }
 
-            TypeName = $"{type.Namespace}.{type.Name}_Implementation";
+            TypeName = $"{Type.Namespace}.{Type.Name}_Implementation";
 
             ImplementType();
         }
@@ -110,14 +66,12 @@ namespace RedisStore
             var ab = AssemblyBuilder.DefineDynamicAssembly(new AssemblyName(TypeName), AssemblyBuilderAccess.RunAndSave);
             var mb = ab.DefineDynamicModule("module", $"{TypeName}.dll");
             var tb = mb.DefineType("Store_User", TypeAttributes.Public);
-            tb.AddInterfaceImplementation(typeof(TInterface));
+            tb.AddInterfaceImplementation(Type);
 
             var _redis = tb.DefineField("_redis", typeof(IDatabase), FieldAttributes.Private);
-
-            ImplementConstructor(tb, _redis);
-
             var _id = tb.DefineField("_id", Properties["Id"].PropertyType, FieldAttributes.Private);
 
+            ImplementConstructor(tb, _redis);
             ImplementIdProperty(tb, _id);
 
             //Implement all the other properties. These are the ones we go back and forth to redis to get.
@@ -171,7 +125,7 @@ namespace RedisStore
             {
                 create.LoadLocal(createdLocal);
                 create.LoadArgument(0);
-                create.LoadConstant($"/{typeof (TInterface).Name}/ID");
+                create.LoadConstant($"/{Type.Name}/ID");
                 create.Call(StringToRedisKey);
                 create.LoadConstant(1);
                 create.Convert<long>();
@@ -182,7 +136,7 @@ namespace RedisStore
             }
 
             create.LoadArgument(0);
-            create.LoadConstant($"/{typeof(TInterface).Name}/{{0}}");
+            create.LoadConstant($"/{Type.Name}/{{0}}");
             create.LoadLocal(createdLocal);
             create.LoadField(idFieldInfo);
 
@@ -195,9 +149,7 @@ namespace RedisStore
             create.Call(StringToRedisKey);
             create.LoadConstant(true);
 
-            var method =
-                typeof(RedisValue).GetMethods()
-                    .First(o => o.Name.In("op_Explicit", "op_Implicit") && o.GetParameters().First().ParameterType == typeof(bool));
+            var method = typeof(RedisValue).GetMethods().First(o => o.Name.In("op_Explicit", "op_Implicit") && o.GetParameters().First().ParameterType == typeof(bool));
 
             create.Call(method);
             create.LoadLocalAddress(timespanLocal);
@@ -205,7 +157,7 @@ namespace RedisStore
             create.LoadLocal(timespanLocal);
             create.LoadConstant(0);
             create.LoadConstant(0);
-            create.CallVirtual(typeof(IDatabase).GetMethod("StringSet", new[] { typeof(RedisKey), typeof(RedisValue), typeof(TimeSpan?), typeof(When), typeof(CommandFlags) }));
+            create.CallVirtual(IDatabaseStringSet);
             create.Pop();
 
             create.LoadLocal(createdLocal);
@@ -219,9 +171,9 @@ namespace RedisStore
             var delete = Emit<Func<IDatabase, TInterface, bool>>.NewDynamicMethod();
 
             delete.LoadArgument(0);
-            delete.LoadConstant($"/{typeof (TInterface).Name}/{{0}}");
+            delete.LoadConstant($"/{Type.Name}/{{0}}");
             delete.LoadArgument(1);
-            delete.Call(typeof(TInterface).GetMethod("get_Id"));
+            delete.Call(Type.GetMethod("get_Id"));
 
             if (_id.FieldType.IsValueType)
             {
@@ -262,14 +214,14 @@ namespace RedisStore
 
         private static void ImplementEnumerate(ModuleBuilder mb, Type result)
         {
-            var enumeratorTypeBuilder = mb.DefineType($"{typeof (TInterface).Name}_Enumerator");
+            var enumeratorTypeBuilder = mb.DefineType($"{Type.Name}_Enumerator");
             enumeratorTypeBuilder.AddInterfaceImplementation(typeof (IEnumerator));
             enumeratorTypeBuilder.AddInterfaceImplementation(typeof (IEnumerator<TInterface>));
 
             var enumerator_redis = enumeratorTypeBuilder.DefineField("_redis", typeof (IDatabase), FieldAttributes.Private);
             var enum_maxid = enumeratorTypeBuilder.DefineField("_maxId", typeof (int), FieldAttributes.Private);
             var enum_position = enumeratorTypeBuilder.DefineField("_position", typeof (int), FieldAttributes.Private);
-            var enum_current = enumeratorTypeBuilder.DefineField("_current", typeof (TInterface), FieldAttributes.Private);
+            var enum_current = enumeratorTypeBuilder.DefineField("_current", Type, FieldAttributes.Private);
 
             var enumConstructor = Emit<Action<IDatabase>>.BuildConstructor(enumeratorTypeBuilder, MethodAttributes.Public);
             enumConstructor.LoadArgument(0);
@@ -280,13 +232,11 @@ namespace RedisStore
             enumConstructor.LoadArgument(0);
             enumConstructor.LoadArgument(0);
             enumConstructor.LoadField(enumerator_redis);
-            enumConstructor.LoadConstant($"/{typeof (TInterface).Name}/ID");
+            enumConstructor.LoadConstant($"/{Type.Name}/ID");
             enumConstructor.Call(StringToRedisKey);
             enumConstructor.LoadConstant(0);
-            enumConstructor.CallVirtual(typeof (IDatabase).GetMethod("StringGet",
-                new[] {typeof (RedisKey), typeof (CommandFlags)}));
-            enumConstructor.Call(
-                typeof (RedisValue).GetMethods().First(o => o.Name == "op_Explicit" && o.ReturnType == typeof (int)));
+            enumConstructor.CallVirtual(typeof (IDatabase).GetMethod("StringGet", new[] {typeof (RedisKey), typeof (CommandFlags)}));
+            enumConstructor.Call(typeof (RedisValue).GetMethods().First(o => o.Name == "op_Explicit" && o.ReturnType == typeof (int)));
             enumConstructor.StoreField(enum_maxid);
             enumConstructor.Return();
 
@@ -321,14 +271,11 @@ namespace RedisStore
 
             enumReset.CreateMethod();
 
-            var enumCurrent = enumeratorTypeBuilder.DefineProperty("Current", PropertyAttributes.None, typeof (object),
-                Type.EmptyTypes);
+            var enumCurrent = enumeratorTypeBuilder.DefineProperty("Current", PropertyAttributes.None, typeof (object),Type.EmptyTypes);
 
-            var typedEnumCurrent = enumeratorTypeBuilder.DefineProperty("Current", PropertyAttributes.None,
-                typeof (TInterface), Type.EmptyTypes);
-            var typedget_Current = Emit<Func<TInterface>>.BuildInstanceMethod(enumeratorTypeBuilder, "get_Current",
-                MethodAttributes);
-            var loc_current = typedget_Current.DeclareLocal(typeof (TInterface));
+            var typedEnumCurrent = enumeratorTypeBuilder.DefineProperty("Current", PropertyAttributes.None, Type, Type.EmptyTypes);
+            var typedget_Current = Emit<Func<TInterface>>.BuildInstanceMethod(enumeratorTypeBuilder, "get_Current", MethodAttributes);
+            var loc_current = typedget_Current.DeclareLocal(Type);
 
             typedget_Current.LoadArgument(0);
             typedget_Current.LoadField(enum_current);
@@ -356,8 +303,7 @@ namespace RedisStore
 
             typedEnumCurrent.SetGetMethod(typedget_CurrentMethodInfo);
 
-            var get_Current = Emit<Func<object>>.BuildInstanceMethod(enumeratorTypeBuilder, "get_Current",
-                MethodAttributes);
+            var get_Current = Emit<Func<object>>.BuildInstanceMethod(enumeratorTypeBuilder, "get_Current", MethodAttributes);
             get_Current.LoadArgument(0);
             get_Current.CallVirtual(typeof (IEnumerator<TInterface>).GetMethod("get_Current"));
             get_Current.Return();
@@ -370,15 +316,13 @@ namespace RedisStore
 
             var enumeratorType = enumeratorTypeBuilder.CreateType();
 
-            var enumerableTypeBuilder = mb.DefineType($"{typeof (TInterface).Name}_Enumerable");
+            var enumerableTypeBuilder = mb.DefineType($"{Type.Name}_Enumerable");
             enumerableTypeBuilder.AddInterfaceImplementation(typeof (IEnumerable));
             enumerableTypeBuilder.AddInterfaceImplementation(typeof (IEnumerable<TInterface>));
 
-            var enumerable_redis = enumerableTypeBuilder.DefineField("_redis", typeof (IDatabase),
-                FieldAttributes.Private);
+            var enumerable_redis = enumerableTypeBuilder.DefineField("_redis", typeof (IDatabase), FieldAttributes.Private);
 
-            var enumerableConstructor = Emit<Action<IDatabase>>.BuildConstructor(enumerableTypeBuilder,
-                MethodAttributes.Public);
+            var enumerableConstructor = Emit<Action<IDatabase>>.BuildConstructor(enumerableTypeBuilder, MethodAttributes.Public);
             enumerableConstructor.LoadArgument(0);
             enumerableConstructor.Call(typeof (object).GetConstructor(Type.EmptyTypes));
             enumerableConstructor.LoadArgument(0);
@@ -388,8 +332,7 @@ namespace RedisStore
 
             enumerableConstructor.CreateConstructor();
 
-            var enumerableGetEnumerator = Emit<Func<IEnumerator>>.BuildInstanceMethod(enumerableTypeBuilder,
-                "GetEnumerator", MethodAttributes);
+            var enumerableGetEnumerator = Emit<Func<IEnumerator>>.BuildInstanceMethod(enumerableTypeBuilder, "GetEnumerator", MethodAttributes);
             enumerableGetEnumerator.LoadArgument(0);
             enumerableGetEnumerator.LoadField(enumerable_redis);
             enumerableGetEnumerator.NewObject(enumeratorType, typeof (IDatabase));
@@ -397,9 +340,7 @@ namespace RedisStore
 
             enumerableGetEnumerator.CreateMethod();
 
-            var enumerableGetTypedEnumerator =
-                Emit<Func<IEnumerator<TInterface>>>.BuildInstanceMethod(enumerableTypeBuilder, "GetEnumerator",
-                    MethodAttributes);
+            var enumerableGetTypedEnumerator = Emit<Func<IEnumerator<TInterface>>>.BuildInstanceMethod(enumerableTypeBuilder, "GetEnumerator", MethodAttributes);
             enumerableGetTypedEnumerator.LoadArgument(0);
             enumerableGetTypedEnumerator.LoadField(enumerable_redis);
             enumerableGetTypedEnumerator.NewObject(enumeratorType, typeof (IDatabase));
@@ -423,7 +364,7 @@ namespace RedisStore
             var exists = Emit<Func<IDatabase, object, bool>>.NewDynamicMethod();
 
             exists.LoadArgument(0);
-            exists.LoadConstant($"/{typeof (TInterface).Name}/{{0}}");
+            exists.LoadConstant($"/{Type.Name}/{{0}}");
             exists.LoadArgument(1);
             exists.Call(StringDotFormat);
             exists.Call(StringToRedisKey);
@@ -488,7 +429,7 @@ namespace RedisStore
             setName.LoadLocal(timeSpan);
             setName.LoadConstant(0);
             setName.LoadConstant(0);
-            setName.CallVirtual(typeof (IDatabase).GetMethod("StringSet", new[] {typeof (RedisKey), typeof (RedisValue), typeof (TimeSpan?), typeof (When), typeof (CommandFlags)}));
+            setName.CallVirtual(IDatabaseStringSet);
             setName.Pop();
             setName.Return();
 
@@ -517,72 +458,6 @@ namespace RedisStore
             var set = setter.CreateMethod();
 
             idProperty.SetSetMethod(set);
-        }
-    }
-
-    class User : IUser
-    {
-        public int Id { get; set; }
-        public string Name { get; set; }
-        public bool IsAwesome { get; set; }
-        public bool? IsAwesomer { get; set; }
-        public long Score { get; set; }
-        public long? Pointses { get; set; }
-
-        public User(IDatabase redis)
-        {
-            
-        }
-    }
-
-    class PropertyImplementationInfo
-    {
-        public Type DeclaringType { get; set; }
-        public Type PropertyType { get; set; }
-        public string Name { get; set; }
-        public string RedisKeyFormat { get; set; }
-    }
-
-    static class Extensions
-    {
-        public static bool In<T>(this T element, params T[] source)
-        {
-            return source.Contains(element);
-        }
-    }
-
-    public static class ConnectionMultiplexerExtensions
-    {
-        public static T Create<T>(this ConnectionMultiplexer con)
-        {
-            try
-            {
-                return Implementer<T>.Create(con.GetDatabase());
-            }
-            catch (TypeInitializationException ex)
-            {
-                throw ex.InnerException;
-            }
-        }
-
-        public static bool Exists<T>(this ConnectionMultiplexer con, object id)
-        {
-            return Implementer<T>.Exists(con.GetDatabase(), id);
-        }
-
-        public static T Get<T>(this ConnectionMultiplexer con, object id)
-        {
-            return Implementer<T>.Get(con.GetDatabase(), id);
-        }
-
-        public static IEnumerable<T> Enumerate<T>(this ConnectionMultiplexer con)
-        {
-            return Implementer<T>.Enumerate(con.GetDatabase());
-        }
-
-        internal static bool Delete<T>(this ConnectionMultiplexer con, T toDelete)
-        {
-            return Implementer<T>.Delete(con.GetDatabase(), toDelete);
         }
     }
 }

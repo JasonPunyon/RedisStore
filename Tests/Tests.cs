@@ -1,9 +1,10 @@
 using System;
 using System.Linq;
 using NUnit.Framework;
+using RedisStore;
 using StackExchange.Redis;
 
-namespace RedisStore
+namespace Tests
 {
     public interface IUser
     {

@@ -4,11 +4,11 @@
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProjectGuid>{72955892-05E3-4AAE-BFAF-44CC0ADFF633}</ProjectGuid>
+    <ProjectGuid>{82BC91AB-BFFA-4DB7-97F9-C4E01CB5AD46}</ProjectGuid>
     <OutputType>Library</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>RedisStore</RootNamespace>
-    <AssemblyName>RedisStore</AssemblyName>
+    <RootNamespace>Tests</RootNamespace>
+    <AssemblyName>Tests</AssemblyName>
     <TargetFrameworkVersion>v4.5.2</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
   </PropertyGroup>
@@ -34,10 +34,6 @@
       <HintPath>..\packages\NUnit.2.6.4\lib\nunit.framework.dll</HintPath>
       <Private>True</Private>
     </Reference>
-    <Reference Include="Sigil, Version=4.5.0.0, Culture=neutral, PublicKeyToken=2d06c3494341c8ab, processorArchitecture=MSIL">
-      <HintPath>..\packages\Sigil.4.5.0\lib\net45\Sigil.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
     <Reference Include="StackExchange.Redis, Version=1.0.316.0, Culture=neutral, processorArchitecture=MSIL">
       <HintPath>..\packages\StackExchange.Redis.1.0.481\lib\net45\StackExchange.Redis.dll</HintPath>
       <Private>True</Private>
@@ -52,18 +48,18 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="ConnectionMultiplexerExtensions.cs" />
-    <Compile Include="Extensions.cs" />
-    <Compile Include="InvalidPropertyTypeException.cs" />
-    <Compile Include="NoIdPropertyException.cs" />
-    <Compile Include="NotAnInterfaceException.cs" />
-    <Compile Include="PropertyImplementationInfo.cs" />
-    <Compile Include="RedisStore.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="ShittyGlobalClass.cs" />
+    <Compile Include="Store_User.cs" />
+    <Compile Include="Tests.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\RedisStore\RedisStore.csproj">
+      <Project>{72955892-05E3-4AAE-BFAF-44CC0ADFF633}</Project>
+      <Name>RedisStore</Name>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
