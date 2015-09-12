@@ -52,13 +52,12 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="ConnectionMultiplexerExtensions.cs" />
+    <Compile Include="Store.cs" />
     <Compile Include="Extensions.cs" />
     <Compile Include="InvalidPropertyTypeException.cs" />
     <Compile Include="NoIdPropertyException.cs" />
     <Compile Include="NotAnInterfaceException.cs" />
-    <Compile Include="PropertyImplementationInfo.cs" />
-    <Compile Include="RedisStore.cs" />
+    <Compile Include="Implementer.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="ShittyGlobalClass.cs" />
   </ItemGroup>

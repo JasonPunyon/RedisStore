@@ -1,31 +1,61 @@
-﻿using System.Threading.Tasks;
-using StackExchange.Redis;
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using RedisStore;
 
 namespace Tests
 {
-    public class Store_User : IUser
+    public interface IUser
     {
-        private readonly IDatabase _redis;
+        int Id { get; }
+        string Name { get; set; }
 
-        public Store_User(IDatabase redis)
-        {
-            _redis = redis;
-            _NameGetTask = _redis.StringGetAsync($"/IUser/{Id}/Name").ContinueWith(val => { return Name = val.ToString(); });
+        int Score { get; set; }
+    }
+
+    public class MyFunctions
+    {
+        public static Func<int, StoreUser> CreateStoreUser = i => new StoreUser() { _id = i };
+    }
+
+    public class StoreUser : IUser
+    {
+        public int _id;
+
+        public int Id {
+            get { return _id; }
+            set { }
         }
 
-        public int Id { get; set; }
-
-        private Task<string> _NameGetTask;
-        private string _Name;
         public string Name
         {
-            get { return _NameGetTask.IsCompleted ? _Name : _NameGetTask.Result; }
-            set { _redis.StringSet($"/IUser/{Id}/Name", value); }
+            get { return Store.Database.HashGet($"/IUser/{Id}", "Name"); }
+            set { Store.Database.HashSet($"/IUser/{Id}", "Name", value); }
         }
 
-        public bool IsAwesome { get; set; }
-        public bool? IsAwesomer { get; set; }
-        public long Score { get; set; }
-        public long? Pointses { get; set; }
+        public int Score { get; set; }
+
+        public static IUser Create()
+        {
+            var u = new StoreUser();
+            var db = Store.Database;
+            u.Id = (int) db.HashIncrement("TypeCounters", "IUser");
+            db.HashSet($"/IUser/{u.Id}", "Created", DateTime.UtcNow.ToEpochTime());
+            return u;
+        }
+
+        public static IUser Get(int id)
+        {
+            var u = new StoreUser();
+            u._id = id;
+            return u;
+        }
+
+        public static IEnumerable<IUser> Enumerate()
+        {
+            return Enumerable
+                .Range(1, (int) Store.Database.HashGet("TypeCounters", "IUser"))
+                .Select(MyFunctions.CreateStoreUser);
+        }
     }
 }
