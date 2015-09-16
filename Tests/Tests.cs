@@ -23,7 +23,7 @@ namespace Tests
         public void DemoThatAwesomeUser()
         {
             //Configure the connection...
-            Store.Connection = ConnectionMultiplexer.Connect("localhost:6379");
+            Store.Connection = ConnectionMultiplexer.Connect("localhost:6379,allowAdmin=true");
 
             //Create an awesome user.
             var user = Store.Create<IAwesomeUser>();
