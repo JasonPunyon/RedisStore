@@ -9,6 +9,11 @@ namespace RedisStore
         public static ConnectionMultiplexer Connection;
         public static IDatabase Database => Connection.GetDatabase();
 
+        public static void DumpAssembly()
+        {
+            Implementer.ab.Save("StoreImplementations.dll");
+        }
+
         public static T Create<T>()
         {
             try

@@ -1,4 +1,5 @@
 using System;
+using System.Dynamic;
 using System.Linq;
 using NUnit.Framework;
 using RedisStore;
@@ -14,10 +15,26 @@ namespace Tests
         //Here's an interface that represents the shape of our data.
         public interface IAwesomeUser
         {
-            int Id { get; set; }
+            int Id { get; }
             string Name { get; set; }
             int AwesomenessLevel { get; set; }
+            IRedisList<string> SomeStuff { get; set; }
+            
+            IRedisList<IQuestion> AskedQuestions { get; set; }
         }
+
+        public interface IQuestion
+        {
+            int Id { get; }
+            string Title { get; set; }
+            string Body { get; set; }
+        }
+
+        //[TearDown]
+        //public void TearDown()
+        //{
+        //    Implementer.ab.Save("StoreImplementations.dll");
+        //}
 
         [Test]
         public void DemoThatAwesomeUser()
@@ -45,6 +62,16 @@ namespace Tests
             {
                 Console.WriteLine($"User #{u.Id}'s name is {u.Name} and is {u.AwesomenessLevel}% awesome.");
             }
+
+            user.SomeStuff.Add("Stuff To Add");
+
+            var q = Store.Create<IQuestion>();
+            q.Title = "How is babby formed?";
+            q.Body = "That's pretty much it.";
+
+            user.AskedQuestions.Add(q);
+
+            Implementer.DumpAssembly();
         }
 
         public Tests()

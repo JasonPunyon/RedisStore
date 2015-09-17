@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
@@ -43,6 +44,8 @@ namespace RedisStore
         public static MethodInfo GetDatabase = typeof (Store).GetMethod("get_Database");
         public static MethodInfo StringFormat = typeof(string).GetMethod("Format", new[] { typeof(string), typeof(object) });
         public static MethodInfo StringToRedisValue = typeof (RedisValue).GetMethod("op_Implicit", new[] {typeof (string)});
+        public static MethodInfo IntToRedisValue = typeof (RedisValue).GetMethod("op_Implicit", new[] {typeof (int)});
+
         public static MethodInfo StringToRedisKey = typeof (RedisKey).GetMethod("op_Implicit", new[] {typeof (string)});
         public static MethodInfo RedisValueToString = typeof (RedisValue).GetMethods().First(o => o.Name == "op_Implicit" && o.ReturnType == typeof (string));
         public static MethodInfo RedisValueToInt = typeof (RedisValue).GetMethods().First(o => o.Name == "op_Explicit" && o.ReturnType == typeof (int));
@@ -50,13 +53,121 @@ namespace RedisStore
         public static MethodInfo HashIncrement = typeof (IDatabase).GetMethod("HashIncrement", new[] {typeof (RedisKey), typeof (RedisValue), typeof (long), typeof (CommandFlags)});
         public static MethodInfo HashGet = typeof(IDatabase).GetMethod("HashGet", new[] { typeof(RedisKey), typeof(RedisValue), typeof(CommandFlags) });
         public static MethodInfo HashSet = typeof(IDatabase).GetMethod("HashSet", new[] { typeof(RedisKey), typeof(RedisValue), typeof(RedisValue), typeof(When), typeof(CommandFlags) });
+        public static MethodInfo EnumerableRange = typeof (Enumerable).GetMethod("Range", new[] {typeof (int), typeof (int)});
+        public static MethodInfo EnumerableSelect = typeof (Enumerable).GetMethods().First(o => o.Name == "Select" && o.GetParameters()[1].ParameterType.GetGenericArguments().Count() == 2);
+        public static MethodInfo DateTimeUtcNow = typeof (DateTime).GetMethod("get_UtcNow");
+        public static MethodInfo ToEpochTime = typeof (Extensions).GetMethod("ToEpochTime");
+        public static MethodInfo ListRange = typeof (IDatabase).GetMethod("ListRange");
+    }
+
+    static class Implementer
+    {
+        public static AssemblyBuilder ab = AssemblyBuilder.DefineDynamicAssembly(new AssemblyName("StoreImplementations"), AssemblyBuilderAccess.RunAndSave);
+        public static ModuleBuilder mb = ab.DefineDynamicModule("module", $"StoreImplementations.dll");
+        public static readonly MethodAttributes MethodAttributes = MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.SpecialName | MethodAttributes.NewSlot | MethodAttributes.HideBySig;
+
+        public static void DumpAssembly()
+        {
+            ab.Save("StoreImplementations.dll");
+        }
+    }
+
+    public interface IRedisList<T> : IEnumerable<T>
+    {
+        void Add(T item);
     }
 
     [SuppressMessage("ReSharper", "StaticMemberInGenericType")]
-    static class Implementer<TInterface>
+    public static class RedisListImplementer<T>
     {
-        static readonly MethodAttributes MethodAttributes = MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.SpecialName | MethodAttributes.NewSlot | MethodAttributes.HideBySig;
+        public static Type RedisListType;
+        private static Type _t;
 
+        static RedisListImplementer()
+        {
+            _t = typeof (T);
+
+            var redisListType = Implementer.mb.DefineType($"{_t.Name}_RedisList", TypeAttributes.Public);
+            redisListType.AddInterfaceImplementation(typeof(IRedisList<T>));
+            //redisListType.AddInterfaceImplementation(typeof (IEnumerable<T>));
+            //redisListType.AddInterfaceImplementation(typeof(IEnumerable));
+
+            var key = redisListType.DefineField("Key", typeof (string), FieldAttributes.Public);
+
+            var add = Emit<Action<T>>.BuildInstanceMethod(redisListType, "Add", Implementer.MethodAttributes);
+
+            add.Call(Methods.GetDatabase);
+            add.LoadArgument(0);
+            add.LoadField(key);
+            add.Call(Methods.StringToRedisKey);
+
+            //Value
+            add.LoadArgument(1);
+
+            //Turn the value into a RedisValue;
+            //Either it's implicitly or explicitly convertible to RedisValue...
+
+            var implicitOrExplicitConversion = typeof(RedisValue).GetMethods().FirstOrDefault(o => o.Name.In("op_Implicit", "op_Explicit") && o.GetParameters()[0].ParameterType == _t);
+            if (implicitOrExplicitConversion != null)
+            {
+                add.Call(implicitOrExplicitConversion);
+            } else if (_t.GetProperty("Id") != null && _t.GetProperty("Id").PropertyType == typeof (int)) //Or it's got an integer Id Property.
+            {
+                add.Call(_t.GetProperty("Id").GetGetMethod());
+                add.Call(Methods.IntToRedisValue);
+            }
+
+            add.LoadConstant(0);
+            add.LoadConstant(0);
+            add.CallVirtual(typeof(IDatabase).GetMethod("ListLeftPush", new[] { typeof(RedisKey), typeof(RedisValue), typeof(When), typeof(CommandFlags) }));
+            add.Pop();
+            add.Return();
+
+            add.CreateMethod();
+
+            var typedGetEnumerator = Emit<Func<IEnumerator<T>>>.BuildInstanceMethod(redisListType, "GetEnumerator", Implementer.MethodAttributes);
+
+            typedGetEnumerator.Call(Methods.GetDatabase);
+            typedGetEnumerator.LoadArgument(0);
+            typedGetEnumerator.LoadField(key);
+            typedGetEnumerator.Call(Methods.StringToRedisKey);
+            typedGetEnumerator.LoadConstant(0L);
+            typedGetEnumerator.LoadConstant(-1L);
+            typedGetEnumerator.LoadConstant(0);
+            typedGetEnumerator.Call(Methods.ListRange);
+
+            var implicitOrExplicitConversion2 = typeof (RedisValue).GetMethods().FirstOrDefault(o => o.Name.In("op_Implicit", "op_Explicit") && o.ReturnType == _t);
+            if (implicitOrExplicitConversion2 != null)
+            {
+                typedGetEnumerator.LoadNull();
+                typedGetEnumerator.LoadFunctionPointer(implicitOrExplicitConversion2);
+                typedGetEnumerator.NewObject(typeof (Func<RedisValue, T>), typeof (object), typeof (IntPtr));
+            }
+            else if (_t.GetProperty("Id") != null && _t.GetProperty("Id").PropertyType == typeof (int))
+            {
+                typedGetEnumerator.LoadField(typeof (Implementer<T>).GetField("FromRedisValue"));
+            }
+
+            typedGetEnumerator.Call(Methods.EnumerableSelect.MakeGenericMethod(typeof (RedisValue), _t));
+            typedGetEnumerator.CallVirtual(typeof (IEnumerable<T>).GetMethod("GetEnumerator"));
+            typedGetEnumerator.Return();
+
+            typedGetEnumerator.CreateMethod();
+
+            var getEnumerator = Emit<Func<IEnumerator>>.BuildInstanceMethod(redisListType, "GetEnumerator", Implementer.MethodAttributes);
+            getEnumerator.LoadArgument(0);
+            getEnumerator.Call(typeof (IEnumerable<T>).GetMethod("GetEnumerator"));
+            getEnumerator.Return();
+
+            getEnumerator.CreateMethod();
+
+            RedisListType = redisListType.CreateType();
+        }
+    }
+
+    [SuppressMessage("ReSharper", "StaticMemberInGenericType")]
+    public static class Implementer<TInterface>
+    {
         private static readonly Type _tInterface;
         private static InterfaceImplementationInfo<TInterface> _implementationInfo;
 
@@ -68,6 +179,7 @@ namespace RedisStore
         public static Func<TInterface> Create;
         public static Func<int, TInterface> Get;
         public static Func<IEnumerable<TInterface>> Enumerate;
+        public static Func<RedisValue, TInterface> FromRedisValue;
 
         static Implementer()
         {
@@ -86,13 +198,25 @@ namespace RedisStore
             ImplementType();
         }
 
+        static void ImplementFromRedisValue()
+        {
+            var fromRedisValue = Emit<Func<RedisValue, TInterface>>.NewDynamicMethod();
+
+            fromRedisValue.NewObject(ImplementedType);
+            fromRedisValue.Duplicate();
+            fromRedisValue.LoadArgument(0);
+            fromRedisValue.Call(Methods.RedisValueToInt);
+            fromRedisValue.StoreField(ImplementedType.GetField("_id"));
+            fromRedisValue.Return();
+
+            FromRedisValue = fromRedisValue.CreateDelegate();
+        } 
+
         static void ImplementType()
         {
             _implementationInfo = new InterfaceImplementationInfo<TInterface>();
 
-            var ab = AssemblyBuilder.DefineDynamicAssembly(new AssemblyName(_implementationInfo.ImplementedTypeName), AssemblyBuilderAccess.RunAndSave);
-            var mb = ab.DefineDynamicModule("module", $"{_implementationInfo.ImplementedTypeName}.dll");
-            _tb = mb.DefineType("Store_User", TypeAttributes.Public);
+            _tb = Implementer.mb.DefineType($"Store_{_tInterface.Name}", TypeAttributes.Public);
             _tb.AddInterfaceImplementation(_tInterface);
 
             _idField = _tb.DefineField("_id", _implementationInfo.IdType, FieldAttributes.Public);
@@ -105,13 +229,14 @@ namespace RedisStore
             ImplementCreate();
             ImplementGet();
             ImplementEnumerate();
+            ImplementFromRedisValue();
         }
 
         static void ImplementIdProperty()
         {
             var idProperty = _tb.DefineProperty("Id", PropertyAttributes.None, CallingConventions.HasThis, typeof (int), Type.EmptyTypes);
 
-            var getIl = Emit<Func<int>>.BuildInstanceMethod(_tb, "get_Id", MethodAttributes);
+            var getIl = Emit<Func<int>>.BuildInstanceMethod(_tb, "get_Id", Implementer.MethodAttributes);
             getIl.LoadArgument(0);
             getIl.LoadField(_idField);
             getIl.Return();
@@ -121,11 +246,11 @@ namespace RedisStore
 
         static void ImplementAllOtherProperties()
         {
-            foreach (var prop in _implementationInfo.Properties)
+            foreach (var prop in _implementationInfo.Properties.Where(o => o.Name != "Id"))
             {
                 var p = _tb.DefineProperty(prop.Name, PropertyAttributes.None, CallingConventions.HasThis, prop.Type, Type.EmptyTypes);
 
-                var getIl = Emit.BuildInstanceMethod(prop.Type, Type.EmptyTypes, _tb, $"get_{prop.Name}", MethodAttributes);
+                var getIl = Emit.BuildInstanceMethod(prop.Type, Type.EmptyTypes, _tb, $"get_{prop.Name}", Implementer.MethodAttributes);
                 getIl.Call(Methods.GetDatabase);
                 getIl.LoadConstant(_implementationInfo.HashName);
                 getIl.LoadArgument(0);
@@ -138,34 +263,63 @@ namespace RedisStore
                 getIl.LoadConstant(0);
                 getIl.Call(Methods.HashGet);
 
-                var gotOne = typeof (RedisValue).GetMethods().First(o => o.Name.In("op_Implicit", "op_Explicit") && o.ReturnType == prop.Type);
-                getIl.Call(gotOne);
+                var conversion = typeof (RedisValue).GetMethods().FirstOrDefault(o => o.Name.In("op_Implicit", "op_Explicit") && o.ReturnType == prop.Type);
+
+                if (conversion != null)
+                {
+                    getIl.Call(conversion);
+                }
+                else if (prop.Type.IsGenericType && prop.Type.GetGenericTypeDefinition() == typeof(IRedisList<>))
+                {
+                    var generatorType = typeof (RedisListImplementer<>).MakeGenericType(prop.Type.GetGenericArguments()[0]);
+                    var listTypeField = generatorType.GetField("RedisListType");
+
+                    getIl.Pop();
+                    getIl.NewObject((Type)listTypeField.GetValue(null));
+                    getIl.Duplicate();
+                    getIl.LoadConstant($"{_implementationInfo.HashName}/{prop.Name}");
+                    getIl.LoadArgument(0);
+                    getIl.LoadField(_idField);
+                    getIl.Box<int>();
+                    getIl.Call(Methods.StringFormat);
+                    getIl.StoreField(((Type) listTypeField.GetValue(null)).GetField("Key"));
+                }
 
                 getIl.Return();
 
                 p.SetGetMethod(getIl.CreateMethod());
 
-                var setIl = Emit.BuildInstanceMethod(typeof (void), new[] {prop.Type}, _tb, $"set_{prop.Name}", MethodAttributes);
-                setIl.Call(Methods.GetDatabase);
-                setIl.LoadConstant(_implementationInfo.HashName);
-                setIl.LoadArgument(0);
-                setIl.LoadField(_idField);
-                setIl.Box<int>();
-                setIl.Call(Methods.StringFormat);
-                setIl.Call(Methods.StringToRedisKey);
-                setIl.LoadConstant(prop.Name);
-                setIl.Call(Methods.StringToRedisValue);
+                var setIl = Emit.BuildInstanceMethod(typeof (void), new[] {prop.Type}, _tb, $"set_{prop.Name}", Implementer.MethodAttributes);
 
-                setIl.LoadArgument(1);
+                var conversion2 = typeof(RedisValue).GetMethods().FirstOrDefault(o => o.Name.In("op_Implicit", "op_Explicit") && o.GetParameters()[0].ParameterType == prop.Type);
 
-                var gotOneAgain = typeof (RedisValue).GetMethods().First(o => o.Name.In("op_Implicit", "op_Explicit") && o.GetParameters()[0].ParameterType == prop.Type);
-                setIl.Call(gotOneAgain);
+                if (conversion2 != null)
+                {
+                    setIl.Call(Methods.GetDatabase);
+                    setIl.LoadConstant(_implementationInfo.HashName);
+                    setIl.LoadArgument(0);
+                    setIl.LoadField(_idField);
+                    setIl.Box<int>();
+                    setIl.Call(Methods.StringFormat);
+                    setIl.Call(Methods.StringToRedisKey);
+                    setIl.LoadConstant(prop.Name);
+                    setIl.Call(Methods.StringToRedisValue);
 
-                setIl.LoadConstant(0);
-                setIl.LoadConstant(0);
-                setIl.Call(Methods.HashSet);
-                setIl.Pop();
-                setIl.Return();
+                    setIl.LoadArgument(1);
+
+                    var gotOneAgain = typeof(RedisValue).GetMethods().First(o => o.Name.In("op_Implicit", "op_Explicit") && o.GetParameters()[0].ParameterType == prop.Type);
+                    setIl.Call(gotOneAgain);
+
+                    setIl.LoadConstant(0);
+                    setIl.LoadConstant(0);
+                    setIl.Call(Methods.HashSet);
+                    setIl.Pop();
+                    setIl.Return();
+                }
+                else if (prop.Type.IsGenericType && prop.Type.GetGenericTypeDefinition() == typeof (IRedisList<>))
+                {
+                    setIl.Return(); //NOP.
+                }
 
                 p.SetSetMethod(setIl.CreateMethod());
             }
@@ -201,8 +355,8 @@ namespace RedisStore
             il.Call(Methods.StringToRedisKey);
             il.LoadConstant("Created");
             il.Call(Methods.StringToRedisValue);
-            il.Call(typeof (DateTime).GetMethod("get_UtcNow"));
-            il.Call(typeof (Extensions).GetMethod("ToEpochTime"));
+            il.Call(Methods.DateTimeUtcNow);
+            il.Call(Methods.ToEpochTime);
             il.Call(Methods.LongToRedisValue);
             il.LoadConstant(0);
             il.LoadConstant(0);
@@ -240,9 +394,9 @@ namespace RedisStore
             il.LoadConstant(0);
             il.Call(Methods.HashGet);
             il.Call(Methods.RedisValueToInt);
-            il.Call(typeof (Enumerable).GetMethod("Range", new[] {typeof (int), typeof (int)}));
+            il.Call(Methods.EnumerableRange);
             il.LoadField(typeof (Implementer<TInterface>).GetField("Get"));
-            il.Call(typeof (Enumerable).GetMethods().First(o => o.Name == "Select" && o.GetParameters()[1].ParameterType.GetGenericArguments().Count() == 2).MakeGenericMethod(new[] { typeof(int), typeof(TInterface)}));
+            il.Call(Methods.EnumerableSelect.MakeGenericMethod(typeof(int), typeof(TInterface)));
             il.Return();
 
             Enumerate = il.CreateDelegate();
