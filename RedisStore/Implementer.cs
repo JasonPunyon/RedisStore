@@ -201,7 +201,19 @@ namespace RedisStore
         static void ImplementFromRedisValue()
         {
             var fromRedisValue = Emit<Func<RedisValue, TInterface>>.NewDynamicMethod();
+            var id = fromRedisValue.DeclareLocal<int>();
+            var notZero = fromRedisValue.DefineLabel();
 
+            fromRedisValue.LoadArgument(0);
+            fromRedisValue.Call(Methods.RedisValueToInt);
+            fromRedisValue.StoreLocal(id);
+            fromRedisValue.LoadLocal(id);
+            fromRedisValue.LoadConstant(0);
+            fromRedisValue.UnsignedBranchIfNotEqual(notZero);
+            fromRedisValue.LoadNull();
+            fromRedisValue.Return();
+
+            fromRedisValue.MarkLabel(notZero);
             fromRedisValue.NewObject(ImplementedType);
             fromRedisValue.Duplicate();
             fromRedisValue.LoadArgument(0);
@@ -251,6 +263,7 @@ namespace RedisStore
                 var p = _tb.DefineProperty(prop.Name, PropertyAttributes.None, CallingConventions.HasThis, prop.Type, Type.EmptyTypes);
 
                 var getIl = Emit.BuildInstanceMethod(prop.Type, Type.EmptyTypes, _tb, $"get_{prop.Name}", Implementer.MethodAttributes);
+
                 getIl.Call(Methods.GetDatabase);
                 getIl.LoadConstant(_implementationInfo.HashName);
                 getIl.LoadArgument(0);
@@ -274,7 +287,7 @@ namespace RedisStore
                     var generatorType = typeof (RedisListImplementer<>).MakeGenericType(prop.Type.GetGenericArguments()[0]);
                     var listTypeField = generatorType.GetField("RedisListType");
 
-                    getIl.Pop();
+                    getIl.Pop(); //OH YOU'RE JUST THE WORST KIND OF PERSON.
                     getIl.NewObject((Type)listTypeField.GetValue(null));
                     getIl.Duplicate();
                     getIl.LoadConstant($"{_implementationInfo.HashName}/{prop.Name}");
@@ -283,6 +296,15 @@ namespace RedisStore
                     getIl.Box<int>();
                     getIl.Call(Methods.StringFormat);
                     getIl.StoreField(((Type) listTypeField.GetValue(null)).GetField("Key"));
+                }
+                else if (prop.Type.GetProperty("Id")?.PropertyType == typeof (int))
+                {
+                    var redisVal = getIl.DeclareLocal<RedisValue>();
+                    getIl.StoreLocal(redisVal);
+                    getIl.LoadField(typeof (Implementer<>).MakeGenericType(prop.Type).GetField("FromRedisValue"));
+                    getIl.LoadLocal(redisVal);
+
+                    getIl.Call(typeof (Func<,>).MakeGenericType(typeof(RedisValue), prop.Type).GetMethod("Invoke"));
                 }
 
                 getIl.Return();
@@ -293,7 +315,7 @@ namespace RedisStore
 
                 var conversion2 = typeof(RedisValue).GetMethods().FirstOrDefault(o => o.Name.In("op_Implicit", "op_Explicit") && o.GetParameters()[0].ParameterType == prop.Type);
 
-                if (conversion2 != null)
+                if (conversion2 != null || prop.Type.GetProperty("Id")?.PropertyType == typeof(int))
                 {
                     setIl.Call(Methods.GetDatabase);
                     setIl.LoadConstant(_implementationInfo.HashName);
@@ -307,8 +329,15 @@ namespace RedisStore
 
                     setIl.LoadArgument(1);
 
-                    var gotOneAgain = typeof(RedisValue).GetMethods().First(o => o.Name.In("op_Implicit", "op_Explicit") && o.GetParameters()[0].ParameterType == prop.Type);
-                    setIl.Call(gotOneAgain);
+                    if (conversion2 != null)
+                    {
+                        setIl.Call(conversion2);
+                    }
+                    else
+                    {
+                        setIl.Call(prop.Type.GetProperty("Id").GetGetMethod());
+                        setIl.Call(Methods.IntToRedisValue);
+                    }
 
                     setIl.LoadConstant(0);
                     setIl.LoadConstant(0);
