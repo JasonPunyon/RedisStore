@@ -134,5 +134,18 @@ namespace Tests
             Assert.AreEqual(2, users[1].Id);
             Assert.AreEqual(3, users[2].Id);
         }
+
+        [Test]
+        public void CountWorks()
+        {
+            var u = Store.Create<IAwesomeUser>();
+
+            for (var i = 1; i < 4; i++)
+            {
+                var q = Store.Create<IQuestion>();
+                u.AskedQuestions.Add(q);
+                Assert.AreEqual(i, u.AskedQuestions.Count);
+            }
+        }
     }
 }
