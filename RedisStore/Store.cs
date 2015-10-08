@@ -14,11 +14,11 @@ namespace RedisStore
             Implementer.ab.Save("StoreImplementations.dll");
         }
 
-        public static T Create<T>()
+        public static T Create<T>(object key = null)
         {
             try
             {
-                return Implementer<T>.Create();
+                return Implementer<T>.Create(key);
             }
             catch (TypeInitializationException ex)
             {
@@ -26,7 +26,7 @@ namespace RedisStore
             }
         }
 
-        public static T Get<T>(int id)
+        public static T Get<T>(object id)
         {
             return Implementer<T>.Get(id);
         }

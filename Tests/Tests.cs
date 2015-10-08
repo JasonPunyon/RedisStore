@@ -1,5 +1,4 @@
 using System;
-using System.Dynamic;
 using System.Linq;
 using NUnit.Framework;
 using RedisStore;
@@ -8,6 +7,12 @@ using StackExchange.Redis;
 namespace Tests
 {
     interface INoIdProperty { }
+
+    public interface INested
+    {
+        int Id { get; }
+        INested Next { get; set; }
+    }
 
     [TestFixture]
     public class Tests
@@ -19,7 +24,9 @@ namespace Tests
             string Name { get; set; }
             int AwesomenessLevel { get; set; }
             IRedisList<string> SomeStuff { get; set; }
-            
+
+            IRedisSet<IQuestion> Favorites { get; set; }
+
             IRedisList<IQuestion> AskedQuestions { get; set; }
         }
 
@@ -63,15 +70,60 @@ namespace Tests
                 Console.WriteLine($"User #{u.Id}'s name is {u.Name} and is {u.AwesomenessLevel}% awesome.");
             }
 
-            user.SomeStuff.Add("Stuff To Add");
+            Console.WriteLine("User SomeStuff == null: {0}", user.SomeStuff == null);
+
+            user.SomeStuff.PushHead("Stuff To Add");
 
             var q = Store.Create<IQuestion>();
             q.Title = "How is babby formed?";
             q.Body = "That's pretty much it.";
 
-            user.AskedQuestions.Add(q);
+            user.AskedQuestions.PushHead(q);
+            user.Favorites.Add(q);
 
-            Implementer.DumpAssembly();
+            var q2 = Store.Create<IQuestion>();
+            q2.Title = "How is babby formed again? [Duplicate]";
+            q2.Body = "I forgot the first time and couldn't search.";
+
+            user.AskedQuestions.PushHead(q);
+
+            var u2 = Store.Create<IAwesomeUser>();
+            u2.Name = "Bob Bobberson";
+
+            u2.Favorites.Add(q);
+            u2.Favorites.Add(q2);
+
+            Console.WriteLine($"User #2 Favorites Count: {u2.Favorites.Count}");
+
+            Console.WriteLine("\nAll Favorited Questions:");
+            foreach (var question in user.Favorites.Union(u2.Favorites))
+            {
+                Console.WriteLine($"Title: {question.Title}");
+                Console.WriteLine($"Body: {question.Body}");
+            }
+
+            Console.WriteLine("\n Questions Favorited By Everyone");
+            foreach (var question in user.Favorites.Intersect(u2.Favorites))
+            {
+                Console.WriteLine($"Title: {question.Title}");
+                Console.WriteLine($"Body: {question.Body}");
+            }
+
+            Console.WriteLine("\n What's the difference between User #1's Favorites and User #2's favorites?");
+            foreach (var question in user.Favorites.Diff(u2.Favorites))
+            {
+                Console.WriteLine($"Title: {question.Title}");
+                Console.WriteLine($"Body: {question.Body}");
+            }
+
+            Console.WriteLine("\n What's the difference between User #2's Favorites and User #1's Favorites?");
+            foreach (var question in u2.Favorites.Diff(user.Favorites))
+            {
+                Console.WriteLine($"Title: {question.Title}");
+                Console.WriteLine($"Body: {question.Body}");
+            }
+
+            //Implementer.DumpAssembly();
         }
 
         public Tests()
@@ -143,9 +195,92 @@ namespace Tests
             for (var i = 1; i < 4; i++)
             {
                 var q = Store.Create<IQuestion>();
-                u.AskedQuestions.Add(q);
+                u.AskedQuestions.PushHead(q);
                 Assert.AreEqual(i, u.AskedQuestions.Count);
             }
         }
+
+        [Test]
+        public void Nested()
+        {
+            var n = Store.Create<INested>();
+            n.Next = Store.Create<INested>();
+            Console.WriteLine(n.Id);
+        }
+
+        public interface IHasASet
+        {
+            int Id { get; }
+            IRedisSet<string> Strings { get; set; } 
+            IRedisSet<IElement> Elements { get; set; } 
+        }
+
+        public interface IElement
+        {
+            int Id { get; }
+        }
+
+        [Test]
+        public void SetRemoveEntityWorks()
+        {
+            var hasASet = Store.Create<IHasASet>();
+
+            var key = Store.Create<IElement>();
+
+            hasASet.Elements.Add(key);
+
+            Assert.AreEqual(1, hasASet.Elements.Count);
+
+            Assert.True(hasASet.Elements.Contains(key));
+
+            hasASet.Elements.Remove(key);
+
+            Assert.AreEqual(0, hasASet.Elements.Count);
+
+            Assert.False(hasASet.Elements.Contains(key));
+        }
+
+        [Test]
+        public void SetRemoveWorks()
+        {
+            var hasASet = Store.Create<IHasASet>();
+
+            var key = Guid.NewGuid().ToString();
+
+            hasASet.Strings.Add(key);
+
+            Assert.AreEqual(1, hasASet.Strings.Count);
+
+            Assert.True(hasASet.Strings.Contains(key));
+
+            hasASet.Strings.Remove(key);
+
+            Assert.AreEqual(0, hasASet.Strings.Count);
+
+            Assert.False(hasASet.Strings.Contains(key));
+        }
+
+        [Test]
+        public void StringIdProperty()
+        {
+            var user = Store.Create<User>();
+            user.Name = "Jason Punyon";
+
+            var token = Store.Create<UserToken>();
+            token.User = user;
+        }
+    }
+
+    public interface User
+    {
+        int Id { get; }
+        string Name { get; set; }
+    }
+
+    // Define other methods and classes here
+    public interface UserToken
+    {
+        string Id { get; }
+        User User { get; set; }
     }
 }

@@ -1,9 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 
 namespace RedisStore
 {
-    static class Extensions
+    static class InternalExtensions
     {
         public static bool In<T>(this T element, params T[] source)
         {
@@ -30,6 +31,16 @@ namespace RedisStore
             if (epoch == EpochMin) return DateTime.MinValue;
             if (epoch == EpochMax) return DateTime.MaxValue;
             return Epoch.AddSeconds(epoch);
+        }
+
+        public static Func<int, object> ToObject = i => i; 
+    }
+
+    public static class Extensions
+    {
+        public static IEnumerable<T> Concat<T>(this IEnumerable<T> source, T element)
+        {
+            return source.Concat(new[] { element });
         }
     }
 }

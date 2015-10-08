@@ -52,7 +52,12 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="FromRedisKey.cs" />
+    <Compile Include="FromRedisValue.cs" />
+    <Compile Include="IRedisList.cs" />
+    <Compile Include="IRedisSet.cs" />
     <Compile Include="RedisListImplementer.cs" />
+    <Compile Include="RedisSetImplementer.cs" />
     <Compile Include="Store.cs" />
     <Compile Include="Extensions.cs" />
     <Compile Include="InvalidPropertyTypeException.cs" />
@@ -61,6 +66,8 @@
     <Compile Include="Implementer.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="ShittyGlobalClass.cs" />
+    <Compile Include="ToRedisKey.cs" />
+    <Compile Include="ToRedisValue.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

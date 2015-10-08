@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using RedisStore;
 
 namespace Tests
@@ -11,6 +12,14 @@ namespace Tests
         string Name { get; set; }
 
         int Score { get; set; }
+    }
+
+    public interface IAsyncUser
+    {
+        int Id { get; }
+
+        Task<string> GetName { get; }
+        string SetName { set; }
     }
 
     public class MyFunctions

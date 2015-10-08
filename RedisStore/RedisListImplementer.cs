@@ -2,7 +2,6 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
 using Sigil;
@@ -13,10 +12,11 @@ namespace RedisStore
     [SuppressMessage("ReSharper", "StaticMemberInGenericType")]
     public static class RedisListImplementer<T>
     {
-        public static Type RedisListType;
+        public static Type ImplementedType;
 
-        private static TypeBuilder _redisListType;
-        private static Type _t;
+        private static readonly TypeBuilder _redisListType;
+        private static readonly Type _t;
+        private static readonly FieldInfo _key;
 
         static RedisListImplementer()
         {
@@ -27,96 +27,143 @@ namespace RedisStore
             _redisListType.AddInterfaceImplementation(typeof (IEnumerable<T>));
             _redisListType.AddInterfaceImplementation(typeof (IEnumerable));
 
-            var key = _redisListType.DefineField("Key", typeof (string), FieldAttributes.Public);
+            _key = _redisListType.DefineField("Key", typeof (string), FieldAttributes.Public);
 
-            var add = Emit<Action<T>>.BuildInstanceMethod(_redisListType, "Add", Implementer.MethodAttributes);
+            ImplementIEnumerable();
+            ImplementCount();
+            ImplementPushHead();
+            ImplementPushTail();
+            ImplementPopHead();
+            ImplementPopTail();
 
-            add.Call(Methods.GetDatabase);
-            add.LoadArgument(0);
-            add.LoadField(key);
-            add.Call(Methods.StringToRedisKey);
-
-            //Value
-            add.LoadArgument(1);
-
-            //Turn the value into a RedisValue;
-            //Either it's implicitly or explicitly convertible to RedisValue...
-
-            var implicitOrExplicitConversion = typeof(RedisValue).GetMethods().FirstOrDefault(o => o.Name.In("op_Implicit", "op_Explicit") && o.GetParameters()[0].ParameterType == _t);
-            if (implicitOrExplicitConversion != null)
-            {
-                add.Call(implicitOrExplicitConversion);
-            } else if (_t.GetProperty("Id") != null && _t.GetProperty("Id").PropertyType == typeof (int)) //Or it's got an integer Id Property.
-            {
-                add.Call(_t.GetProperty("Id").GetGetMethod());
-                add.Call(Methods.IntToRedisValue);
-            }
-
-            add.LoadConstant(0);
-            add.LoadConstant(0);
-            add.CallVirtual(typeof(IDatabase).GetMethod("ListLeftPush", new[] { typeof(RedisKey), typeof(RedisValue), typeof(When), typeof(CommandFlags) }));
-            add.Pop();
-            add.Return();
-
-            add.CreateMethod();
-
-            var typedGetEnumerator = Emit<Func<IEnumerator<T>>>.BuildInstanceMethod(_redisListType, "GetEnumerator", Implementer.MethodAttributes);
-
-            typedGetEnumerator.Call(Methods.GetDatabase);
-            typedGetEnumerator.LoadArgument(0);
-            typedGetEnumerator.LoadField(key);
-            typedGetEnumerator.Call(Methods.StringToRedisKey);
-            typedGetEnumerator.LoadConstant(0L);
-            typedGetEnumerator.LoadConstant(-1L);
-            typedGetEnumerator.LoadConstant(0);
-            typedGetEnumerator.Call(Methods.ListRange);
-
-            var implicitOrExplicitConversion2 = typeof (RedisValue).GetMethods().FirstOrDefault(o => o.Name.In("op_Implicit", "op_Explicit") && o.ReturnType == _t);
-            if (implicitOrExplicitConversion2 != null)
-            {
-                typedGetEnumerator.LoadNull();
-                typedGetEnumerator.LoadFunctionPointer(implicitOrExplicitConversion2);
-                typedGetEnumerator.NewObject(typeof (Func<RedisValue, T>), typeof (object), typeof (IntPtr));
-            }
-            else if (_t.GetProperty("Id") != null && _t.GetProperty("Id").PropertyType == typeof (int))
-            {
-                typedGetEnumerator.LoadField(typeof (Implementer<T>).GetField("FromRedisValue"));
-            }
-
-            typedGetEnumerator.Call(Methods.EnumerableSelect.MakeGenericMethod(typeof (RedisValue), _t));
-            typedGetEnumerator.CallVirtual(typeof (IEnumerable<T>).GetMethod("GetEnumerator"));
-            typedGetEnumerator.Return();
-
-            typedGetEnumerator.CreateMethod();
-
-            var getEnumerator = Emit<Func<IEnumerator>>.BuildInstanceMethod(_redisListType, "GetEnumerator", Implementer.MethodAttributes);
-            getEnumerator.LoadArgument(0);
-            getEnumerator.Call(typeof (IEnumerable<T>).GetMethod("GetEnumerator"));
-            getEnumerator.Return();
-
-            getEnumerator.CreateMethod();
-
-            ImplementCount(key);
-
-            RedisListType = _redisListType.CreateType();
+            ImplementedType = _redisListType.CreateType();
         }
 
-        static void ImplementCount(FieldInfo key)
+        static void LoadKeyFieldAsRedisKey<Q>(Emit<Q> il)
+        {
+            il.LoadArgument(0);
+            il.LoadField(_key);
+            il.Call(Methods.StringToRedisKey);
+        }
+
+        static void ImplementIEnumerable()
+        {
+            var typedIl = Emit<Func<IEnumerator<T>>>.BuildInstanceMethod(_redisListType, "GetEnumerator", Implementer.MethodAttributes);
+
+            typedIl.Call(Methods.GetDatabase);
+            LoadKeyFieldAsRedisKey(typedIl);
+            typedIl.LoadConstant(0L);
+            typedIl.LoadConstant(-1L);
+            typedIl.LoadConstant(0);
+            typedIl.Call(Methods.ListRange);
+
+            typedIl.LoadField(FromRedisValue<T>.ImplField);
+
+            typedIl.Call(Methods.EnumerableSelect<RedisValue, T>());
+            typedIl.CallVirtual(typeof(IEnumerable<T>).GetMethod("GetEnumerator"));
+            typedIl.Return();
+
+            typedIl.CreateMethod();
+
+            var il = Emit<Func<IEnumerator>>.BuildInstanceMethod(_redisListType, "GetEnumerator", Implementer.MethodAttributes);
+            il.LoadArgument(0);
+            il.Call(typeof(IEnumerable<T>).GetMethod("GetEnumerator"));
+            il.Return();
+
+            il.CreateMethod();
+        }
+
+        static void ImplementCount()
         {
             var count = _redisListType.DefineProperty("Count", PropertyAttributes.None, CallingConventions.HasThis, typeof (int), Type.EmptyTypes);
 
             var getIl = Emit<Func<int>>.BuildInstanceMethod(_redisListType, "get_Count", Implementer.MethodAttributes);
 
             getIl.Call(Methods.GetDatabase);
-            getIl.LoadArgument(0);
-            getIl.LoadField(key);
-            getIl.Call(Methods.StringToRedisKey);
+            LoadKeyFieldAsRedisKey(getIl);
             getIl.LoadConstant(0);
             getIl.CallVirtual(typeof (IDatabase).GetMethod("ListLength"));
             getIl.ConvertOverflow<int>();
             getIl.Return();
 
             count.SetGetMethod(getIl.CreateMethod());
+        }
+
+        static void ImplementPushHead()
+        {
+            var il = Emit<Action<T>>.BuildInstanceMethod(_redisListType, "PushHead", Implementer.MethodAttributes);
+
+            il.Call(Methods.GetDatabase);
+            LoadKeyFieldAsRedisKey(il);
+
+            //Value
+            il.LoadField(ToRedisValue<T>.ImplField);
+            il.LoadArgument(1);
+            il.Call(ToRedisValue<T>.Invoke);
+
+            il.LoadConstant(0);
+            il.LoadConstant(0);
+            il.CallVirtual(typeof(IDatabase).GetMethod("ListLeftPush", new[] { typeof(RedisKey), typeof(RedisValue), typeof(When), typeof(CommandFlags) }));
+            il.Pop();
+            il.Return();
+
+            il.CreateMethod();
+
+        }
+
+        static void ImplementPushTail()
+        {
+            var il = Emit<Action<T>>.BuildInstanceMethod(_redisListType, "PushTail", Implementer.MethodAttributes);
+
+            il.Call(Methods.GetDatabase);
+            LoadKeyFieldAsRedisKey(il);
+
+            //Value
+            il.LoadField(ToRedisValue<T>.ImplField);
+            il.LoadArgument(1);
+            il.Call(ToRedisValue<T>.Invoke);
+
+            il.LoadConstant(0);
+            il.LoadConstant(0);
+            il.CallVirtual(typeof(IDatabase).GetMethod("ListRightPush", new[] { typeof(RedisKey), typeof(RedisValue), typeof(When), typeof(CommandFlags) }));
+            il.Pop();
+            il.Return();
+
+            il.CreateMethod();
+        }
+
+        static void ImplementPopHead()
+        {
+            var il = Emit<Func<T>>.BuildInstanceMethod(_redisListType, "PopHead", Implementer.MethodAttributes);
+
+            il.LoadField(FromRedisValue<T>.ImplField);
+
+            il.Call(Methods.GetDatabase);
+            LoadKeyFieldAsRedisKey(il);
+            il.LoadConstant(0);
+            il.Call(typeof (IDatabase).GetMethod("ListLeftPop"));
+
+            il.Call(FromRedisValue<T>.Invoke);
+
+            il.Return();
+            il.CreateMethod();
+        }
+
+        static void ImplementPopTail()
+        {
+            var il = Emit<Func<T>>.BuildInstanceMethod(_redisListType, "PopTail", Implementer.MethodAttributes);
+
+            il.LoadField(FromRedisValue<T>.ImplField);
+
+            il.Call(Methods.GetDatabase);
+            LoadKeyFieldAsRedisKey(il);
+            il.LoadConstant(0);
+            il.Call(typeof(IDatabase).GetMethod("ListRightPop"));
+
+            il.Call(FromRedisValue<T>.Invoke);
+
+            il.Return();
+            il.CreateMethod();
         }
     }
 }
