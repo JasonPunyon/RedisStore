@@ -102,16 +102,19 @@ namespace RedisStore
     public static class Implementer<TInterface>
     {
         private static readonly Type _tInterface;
+
         private static InterfaceImplementationInfo<TInterface> _implementationInfo;
 
         private static TypeBuilder _tb;
         private static FieldInfo _idField;
 
-        public static Type ImplementedType;
+        private static readonly Lazy<Type> _implementedType = new Lazy<Type>(ImplementType);
+        public static Type ImplementedType => _implementedType.Value;
 
-        public static Func<object, TInterface> Create;
-        public static Func<object, TInterface> Get;
-        public static Func<IEnumerable<TInterface>> Enumerate;
+        public static readonly Lazy<Func<object, TInterface>> Create = new Lazy<Func<object, TInterface>>(ImplementCreate);
+        public static readonly Lazy<Func<object, TInterface>> Get = new Lazy<Func<object, TInterface>>(ImplementGet);
+        public static readonly Lazy<Func<IEnumerable<TInterface>>> Enumerate = new Lazy<Func<IEnumerable<TInterface>>>(ImplementEnumerate);
+
         public static Func<RedisValue, TInterface> FromRedisValue;
 
         static Implementer()
@@ -128,13 +131,11 @@ namespace RedisStore
                 throw new NoIdPropertyException(_tInterface);
             }
 
-            ImplementType();
+            _implementationInfo = new InterfaceImplementationInfo<TInterface>();
         }
 
-        static void ImplementType()
+        static Type ImplementType()
         {
-            _implementationInfo = new InterfaceImplementationInfo<TInterface>();
-
             _tb = Implementer.mb.DefineType($"Store_{_tInterface.Name}", TypeAttributes.Public);
             _tb.AddInterfaceImplementation(_tInterface);
 
@@ -143,11 +144,7 @@ namespace RedisStore
             ImplementIdProperty();
             ImplementAllOtherProperties();
 
-            ImplementedType = _tb.CreateType();
-
-            ImplementCreate();
-            ImplementGet();
-            ImplementEnumerate();
+            return _tb.CreateType();
         }
 
         static void ImplementIdProperty()
@@ -182,7 +179,7 @@ namespace RedisStore
                         : typeof (RedisSetImplementer<>)).MakeGenericType(prop.Type.GetGenericArguments()[0]);
 
                     var typeField = generatorType.GetField("ImplementedType");
-                    getIl.NewObject((Type) typeField.GetValue(null));
+                    getIl.NewObject(((Lazy<Type>) typeField.GetValue(null)).Value);
                     getIl.Duplicate();
                     getIl.LoadConstant($"{_implementationInfo.HashName}/{prop.Name}");
                     getIl.LoadArgument(0);
@@ -194,12 +191,13 @@ namespace RedisStore
                     }
 
                     getIl.Call(Methods.StringFormat);
-                    getIl.StoreField(((Type) typeField.GetValue(null)).GetField("Key"));
+                    getIl.StoreField(((Lazy<Type>) typeField.GetValue(null)).Value.GetField("Key"));
                     getIl.Return();
                 }
                 else
                 {
                     getIl.LoadField(typeof (FromRedisValue<>).MakeGenericType(prop.Type).GetField("Implementation"));
+                    getIl.Call(typeof (Lazy<>).MakeGenericType(typeof (Func<,>).MakeGenericType(typeof (RedisValue), prop.Type)).GetMethod("get_Value"));
 
                     getIl.Call(Methods.GetDatabase);
                     getIl.LoadConstant(_implementationInfo.HashName);
@@ -279,7 +277,7 @@ namespace RedisStore
             }
         }
 
-        static void ImplementCreate()
+        static Func<object, TInterface> ImplementCreate()
         {
             var il = Emit<Func<object, TInterface>>.NewDynamicMethod();
             var result = il.DeclareLocal(ImplementedType);
@@ -352,10 +350,10 @@ namespace RedisStore
             il.LoadLocal(result);
             il.Return();
 
-            Create = il.CreateDelegate();
+            return il.CreateDelegate();
         }
 
-        static void ImplementGet()
+        static Func<object, TInterface> ImplementGet()
         {
             var il = Emit<Func<object, TInterface>>.NewDynamicMethod();
             var idField = ImplementedType.GetField("_id");
@@ -376,10 +374,10 @@ namespace RedisStore
             il.StoreField(idField);
             il.Return();
 
-            Get = il.CreateDelegate();
+            return il.CreateDelegate();
         }
 
-        static void ImplementEnumerate()
+        static Func<IEnumerable<TInterface>> ImplementEnumerate()
         {
             var il = Emit<Func<IEnumerable<TInterface>>>.NewDynamicMethod();
 
@@ -398,6 +396,7 @@ namespace RedisStore
                 il.LoadField(typeof (InternalExtensions).GetField("ToObject"));
                 il.Call(Methods.EnumerableSelect<int, object>());
                 il.LoadField(typeof(Implementer<TInterface>).GetField("Get")); //<-- THis has to be a func of int / interface...
+                il.Call(typeof (Lazy<Func<object, TInterface>>).GetProperty("Value").GetGetMethod());
                 il.Call(Methods.EnumerableSelect<object, TInterface>());
                 il.Return();
             }
@@ -407,7 +406,7 @@ namespace RedisStore
                 il.Return();
             }
 
-            Enumerate = il.CreateDelegate();
+            return il.CreateDelegate();
         }
     }
 }

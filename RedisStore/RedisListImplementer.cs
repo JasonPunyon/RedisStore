@@ -12,13 +12,13 @@ namespace RedisStore
     [SuppressMessage("ReSharper", "StaticMemberInGenericType")]
     public static class RedisListImplementer<T>
     {
-        public static Type ImplementedType;
+        public static Lazy<Type> ImplementedType = new Lazy<Type>(ImplementType);
 
-        private static readonly TypeBuilder _redisListType;
-        private static readonly Type _t;
-        private static readonly FieldInfo _key;
+        private static TypeBuilder _redisListType;
+        private static Type _t;
+        private static FieldInfo _key;
 
-        static RedisListImplementer()
+        static Type ImplementType()
         {
             _t = typeof (T);
 
@@ -36,7 +36,7 @@ namespace RedisStore
             ImplementPopHead();
             ImplementPopTail();
 
-            ImplementedType = _redisListType.CreateType();
+            return _redisListType.CreateType();
         }
 
         static void LoadKeyFieldAsRedisKey<Q>(Emit<Q> il)
@@ -58,6 +58,7 @@ namespace RedisStore
             typedIl.Call(Methods.ListRange);
 
             typedIl.LoadField(FromRedisValue<T>.ImplField);
+            typedIl.Call(typeof (Lazy<Func<RedisValue, T>>).GetMethod("get_Value"));
 
             typedIl.Call(Methods.EnumerableSelect<RedisValue, T>());
             typedIl.CallVirtual(typeof(IEnumerable<T>).GetMethod("GetEnumerator"));
@@ -137,6 +138,7 @@ namespace RedisStore
             var il = Emit<Func<T>>.BuildInstanceMethod(_redisListType, "PopHead", Implementer.MethodAttributes);
 
             il.LoadField(FromRedisValue<T>.ImplField);
+            il.Call(typeof(Lazy<Func<RedisValue, T>>).GetMethod("get_Value"));
 
             il.Call(Methods.GetDatabase);
             LoadKeyFieldAsRedisKey(il);
@@ -154,6 +156,7 @@ namespace RedisStore
             var il = Emit<Func<T>>.BuildInstanceMethod(_redisListType, "PopTail", Implementer.MethodAttributes);
 
             il.LoadField(FromRedisValue<T>.ImplField);
+            il.Call(typeof(Lazy<Func<RedisValue, T>>).GetMethod("get_Value"));
 
             il.Call(Methods.GetDatabase);
             LoadKeyFieldAsRedisKey(il);

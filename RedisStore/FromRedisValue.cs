@@ -8,15 +8,12 @@ namespace RedisStore
 {
     public static class FromRedisValue<T>
     {
-        public static Func<RedisValue, T> Implementation;
-        public static FieldInfo ImplField;
-        public static MethodInfo Invoke;
+        public static Lazy<Func<RedisValue, T>> Implementation = new Lazy<Func<RedisValue, T>>(Implement);
+        public static FieldInfo ImplField = typeof(FromRedisValue<T>).GetField("Implementation");
+        public static MethodInfo Invoke = typeof(Func<RedisValue, T>).GetMethod("Invoke");
 
-        static FromRedisValue()
+        static Func<RedisValue, T> Implement()
         {
-            ImplField = typeof(FromRedisValue<T>).GetField("Implementation");
-            Invoke = typeof(Func<RedisValue, T>).GetMethod("Invoke");
-
             var implicitOrExplicitConversion = typeof (RedisValue).GetMethods().SingleOrDefault(o => o.Name.In("op_Implicit", "op_Explicit") && o.ReturnType == typeof (T));
 
             if (implicitOrExplicitConversion != null)
@@ -27,8 +24,7 @@ namespace RedisStore
                 il.Call(implicitOrExplicitConversion);
                 il.Return();
 
-                Implementation = il.CreateDelegate();
-                return;
+                return il.CreateDelegate();
             }
 
             if (typeof (T).IsInterface && typeof (T).GetProperty("Id") != null)
@@ -47,10 +43,11 @@ namespace RedisStore
                     il.StoreField(Implementer<T>.ImplementedType.GetField("_id"));
                     il.Return();
 
-                    Implementation = il.CreateDelegate();
-                    return;
+                    return il.CreateDelegate();
                 }
             }
+
+            return null;
         }
     }
 }

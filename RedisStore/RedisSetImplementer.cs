@@ -13,24 +13,24 @@ namespace RedisStore
     [SuppressMessage("ReSharper", "StaticMemberInGenericType")]
     public static class RedisSetImplementer<T>
     {
-        public static Type ImplementedType;
+        public static Lazy<Type> ImplementedType = new Lazy<Type>(ImplementType);
 
-        private static readonly TypeBuilder _redisSetType;
-        private static readonly Type _t;
-        private static readonly FieldInfo _key;
+        private static TypeBuilder _redisSetType;
+        private static Type _t;
+        private static FieldInfo _key;
 
-        public static Func<object, RedisKey> AuxFunc;
+        public static Lazy<Func<object, RedisKey>> AuxFunc = new Lazy<Func<object, RedisKey>>(ImplementAuxFunc);
 
-        static RedisSetImplementer()
+        static Type ImplementType()
         {
-            _t = typeof (T);
+            _t = typeof(T);
 
             _redisSetType = Implementer.mb.DefineType($"{_t.Name}_RedisSet", TypeAttributes.Public);
             _redisSetType.AddInterfaceImplementation(typeof(IRedisSet<T>));
             _redisSetType.AddInterfaceImplementation(typeof(IEnumerable<T>));
             _redisSetType.AddInterfaceImplementation(typeof(IEnumerable));
 
-            _key = _redisSetType.DefineField("Key", typeof (string), FieldAttributes.Public);
+            _key = _redisSetType.DefineField("Key", typeof(string), FieldAttributes.Public);
 
             ImplementAdd();
             ImplementCount();
@@ -41,19 +41,21 @@ namespace RedisStore
             ImplementContains();
             ImplementIEnumerable();
 
-            ImplementedType = _redisSetType.CreateType();
+            return _redisSetType.CreateType();
+        } 
 
-            //Aux Function I need.
+        static Func<object, RedisKey> ImplementAuxFunc()
+        {
             var aux = Emit.NewDynamicMethod(typeof(RedisKey), new[] { typeof(object) });
 
             aux.LoadArgument(0);
-            aux.CastClass(ImplementedType);
-            aux.LoadField(ImplementedType.GetField("Key"));
+            aux.CastClass(ImplementedType.Value);
+            aux.LoadField(ImplementedType.Value.GetField("Key"));
             aux.Call(Methods.StringToRedisKey);
             aux.Return();
 
-            AuxFunc = aux.CreateDelegate<Func<object, RedisKey>>();
-        }
+            return aux.CreateDelegate<Func<object, RedisKey>>();
+        } 
 
         static void LoadKeyFieldAsRedisKey<Q>(Emit<Q> il)
         {
@@ -109,6 +111,7 @@ namespace RedisStore
 
             il.Call(Methods.EnumerableCast<object>());
             il.LoadField(typeof(RedisSetImplementer<T>).GetField("AuxFunc"));
+            il.Call(typeof (Lazy<Func<object, RedisKey>>).GetMethod("get_Value"));
 
             il.Call(Methods.EnumerableSelect<object, RedisKey>());
 
@@ -125,6 +128,7 @@ namespace RedisStore
             //Load up the selector function...
 
             il.LoadField(FromRedisValue<T>.ImplField);
+            il.Call(typeof(Lazy<Func<RedisValue, T>>).GetMethod("get_Value"));
             il.Call(Methods.EnumerableSelect<RedisValue, T>());
             il.Return();
 
@@ -195,7 +199,7 @@ namespace RedisStore
             typedGetEnumerator.Call(Methods.SetMembers);
 
             typedGetEnumerator.LoadField(typeof (FromRedisValue<T>).GetField("Implementation"));
-
+            typedGetEnumerator.Call(typeof(Lazy<Func<RedisValue, T>>).GetMethod("get_Value"));
             typedGetEnumerator.Call(Methods.EnumerableSelect<RedisValue, T>());
             typedGetEnumerator.CallVirtual(typeof(IEnumerable<T>).GetMethod("GetEnumerator"));
             typedGetEnumerator.Return();

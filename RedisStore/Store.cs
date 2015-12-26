@@ -18,7 +18,7 @@ namespace RedisStore
         {
             try
             {
-                return Implementer<T>.Create(key);
+                return Implementer<T>.Create.Value(key);
             }
             catch (TypeInitializationException ex)
             {
@@ -28,12 +28,12 @@ namespace RedisStore
 
         public static T Get<T>(object id)
         {
-            return Implementer<T>.Get(id);
+            return Implementer<T>.Get.Value(id);
         }
 
         public static IEnumerable<T> Enumerate<T>()
         {
-            return Implementer<T>.Enumerate();
+            return Implementer<T>.Enumerate.Value();
         }
     }
 }

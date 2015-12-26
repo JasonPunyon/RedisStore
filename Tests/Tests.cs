@@ -269,6 +269,25 @@ namespace Tests
             var token = Store.Create<UserToken>();
             token.User = user;
         }
+
+        [Test]
+        public void ManyToManyViaSets()
+        {
+            var tag = Store.Create<ISOTag>();
+        }
+    }
+
+    public interface ISOTag
+    {
+        int Id { get; }
+        string Name { get; set; }
+        IRedisSet<ISOQuestion> Questions { get; set; } 
+    }
+
+    public interface ISOQuestion
+    {
+        int Id { get; set; }
+        IRedisSet<ISOTag> Tags { get; set; } 
     }
 
     public interface User
