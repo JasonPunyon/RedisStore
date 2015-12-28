@@ -48,6 +48,16 @@ namespace RedisStore
                     return;
                 }
             }
+
+            if (typeof (T) == typeof (DateTime))
+            {
+                il.LoadArgumentAddress(0);
+                il.Call(typeof (DateTime).GetMethod("ToBinary"));
+                il.Call(Methods.LongToRedisValue);
+                il.Return();
+                Implementation = il.CreateDelegate();
+                return;
+            }
         }
     }
 }

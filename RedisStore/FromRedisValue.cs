@@ -47,6 +47,16 @@ namespace RedisStore
                 }
             }
 
+            if (typeof (T) == typeof (DateTime))
+            {
+                var il = Emit<Func<RedisValue, T>>.NewDynamicMethod();
+                il.LoadArgument(0);
+                il.Call(Methods.RedisValueToLong);
+                il.Call(typeof (DateTime).GetMethod("FromBinary"));
+                il.Return();
+                return il.CreateDelegate();
+            }
+
             return null;
         }
     }

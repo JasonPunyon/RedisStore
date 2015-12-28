@@ -275,6 +275,14 @@ namespace Tests
         {
             var tag = Store.Create<ISOTag>();
         }
+
+        [Test]
+        public void TypeWithADatetime()
+        {
+            var w = Store.Create<WithDateTime>();
+            w.Date = DateTime.UtcNow;
+            Console.WriteLine(w.Date);
+        }
     }
 
     public interface ISOTag
@@ -301,5 +309,11 @@ namespace Tests
     {
         string Id { get; }
         User User { get; set; }
+    }
+
+    public interface WithDateTime
+    {
+        int Id { get; }
+        DateTime Date { get; set; }
     }
 }

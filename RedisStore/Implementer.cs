@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Data.SqlTypes;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Reflection;
@@ -49,6 +50,9 @@ namespace RedisStore
         public static MethodInfo RedisValueToString = typeof (RedisValue).GetMethods().First(o => o.Name == "op_Implicit" && o.ReturnType == typeof (string));
         public static MethodInfo RedisValueToInt = typeof (RedisValue).GetMethods().First(o => o.Name == "op_Explicit" && o.ReturnType == typeof (int));
         public static MethodInfo LongToRedisValue = typeof (RedisValue).GetMethod("op_Implicit", new[] {typeof (long)});
+
+        public static MethodInfo RedisValueToLong = typeof(RedisValue).GetMethods().First(o => o.Name == "op_Explicit" && o.ReturnType == typeof(long));
+
         public static MethodInfo HashIncrement = typeof (IDatabase).GetMethod("HashIncrement", new[] {typeof (RedisKey), typeof (RedisValue), typeof (long), typeof (CommandFlags)});
         public static MethodInfo HashGet = typeof(IDatabase).GetMethod("HashGet", new[] { typeof(RedisKey), typeof(RedisValue), typeof(CommandFlags) });
         public static MethodInfo HashSet = typeof(IDatabase).GetMethod("HashSet", new[] { typeof(RedisKey), typeof(RedisValue), typeof(RedisValue), typeof(When), typeof(CommandFlags) });
@@ -196,7 +200,8 @@ namespace RedisStore
                 }
                 else
                 {
-                    getIl.LoadField(typeof (FromRedisValue<>).MakeGenericType(prop.Type).GetField("Implementation"));
+                    var fromRedisValue = typeof (FromRedisValue<>).MakeGenericType(prop.Type);
+                    getIl.LoadField(fromRedisValue.GetField("Implementation"));
                     getIl.Call(typeof (Lazy<>).MakeGenericType(typeof (Func<,>).MakeGenericType(typeof (RedisValue), prop.Type)).GetMethod("get_Value"));
 
                     getIl.Call(Methods.GetDatabase);
@@ -223,7 +228,7 @@ namespace RedisStore
 
                     //Call
                     getIl.Call(Methods.HashGet);
-                    getIl.Call(typeof (Func<,>).MakeGenericType(typeof (RedisValue), prop.Type).GetMethod("Invoke"));
+                    getIl.Call((MethodInfo)fromRedisValue.GetField("Invoke").GetValue(null));
                     getIl.Return();
                 }
 
@@ -231,9 +236,13 @@ namespace RedisStore
 
                 var setIl = Emit.BuildInstanceMethod(typeof (void), new[] {prop.Type}, _tb, $"set_{prop.Name}", Implementer.MethodAttributes);
 
-                var conversion2 = typeof(RedisValue).GetMethods().FirstOrDefault(o => o.Name.In("op_Implicit", "op_Explicit") && o.GetParameters()[0].ParameterType == prop.Type);
+                
 
-                if (conversion2 != null || prop.Type.GetProperty("Id")?.PropertyType == typeof(int))
+                if (prop.Type.IsGenericType && prop.Type.GetGenericTypeDefinition().In(typeof(IRedisList<>), typeof(IRedisSet<>)))
+                {
+                    setIl.Return(); //NOP.
+                }
+                else
                 {
                     setIl.Call(Methods.GetDatabase);
                     setIl.LoadConstant(_implementationInfo.HashName);
@@ -250,27 +259,19 @@ namespace RedisStore
                     setIl.LoadConstant(prop.Name);
                     setIl.Call(Methods.StringToRedisValue);
 
-                    setIl.LoadArgument(1);
+                    var toRedisValue = typeof(ToRedisValue<>).MakeGenericType(prop.Type);
+                    var impl = toRedisValue.GetField("Implementation");
+                    var invoke = (MethodInfo)toRedisValue.GetField("Invoke").GetValue(null);
 
-                    if (conversion2 != null)
-                    {
-                        setIl.Call(conversion2);
-                    }
-                    else
-                    {
-                        setIl.Call(prop.Type.GetProperty("Id").GetGetMethod());
-                        setIl.Call(Methods.IntToRedisValue);
-                    }
+                    setIl.LoadField(impl);
+                    setIl.LoadArgument(1);
+                    setIl.Call(invoke);
 
                     setIl.LoadConstant(0);
                     setIl.LoadConstant(0);
                     setIl.Call(Methods.HashSet);
                     setIl.Pop();
                     setIl.Return();
-                }
-                else if (prop.Type.IsGenericType && prop.Type.GetGenericTypeDefinition().In(typeof(IRedisList<>), typeof(IRedisSet<>)))
-                {
-                    setIl.Return(); //NOP.
                 }
 
                 p.SetSetMethod(setIl.CreateMethod());
