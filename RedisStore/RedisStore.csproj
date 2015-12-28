@@ -52,6 +52,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Async.cs" />
     <Compile Include="FromRedisKey.cs" />
     <Compile Include="FromRedisValue.cs" />
     <Compile Include="IRedisList.cs" />

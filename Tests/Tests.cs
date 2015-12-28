@@ -1,5 +1,8 @@
 using System;
 using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
 using NUnit.Framework;
 using RedisStore;
 using StackExchange.Redis;
@@ -283,6 +286,17 @@ namespace Tests
             w.Date = DateTime.UtcNow;
             Console.WriteLine(w.Date);
         }
+
+        [Test]
+        public static async Task AsyncProperties()
+        {
+            var a = Store.Create<AsyncProperties>();
+            a.NameAsync = "Jason Punyon";
+            Console.WriteLine(await a.NameAsync);
+
+            a.Score = 100;
+            Console.WriteLine(await a.Score);
+        }
     }
 
     public interface ISOTag
@@ -315,5 +329,13 @@ namespace Tests
     {
         int Id { get; }
         DateTime Date { get; set; }
+    }
+
+    public interface AsyncProperties
+    {
+        int Id { get; }
+
+        Async<string> NameAsync { get; set; }
+        Async<int> Score { get; set; } 
     }
 }

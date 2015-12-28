@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Threading.Tasks;
+using StackExchange.Redis;
 
 namespace RedisStore
 {
@@ -33,7 +36,7 @@ namespace RedisStore
             return Epoch.AddSeconds(epoch);
         }
 
-        public static Func<int, object> ToObject = i => i; 
+        public static Func<int, object> ToObject = i => i;
     }
 
     public static class Extensions
@@ -41,6 +44,11 @@ namespace RedisStore
         public static IEnumerable<T> Concat<T>(this IEnumerable<T> source, T element)
         {
             return source.Concat(new[] { element });
+        }
+
+        public static TaskAwaiter<T> GetAwaiter<T>(this Async<T> toAwait)
+        {
+            return toAwait._task.GetAwaiter();
         }
     }
 }

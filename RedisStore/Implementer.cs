@@ -1,10 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Data.SqlTypes;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
+using System.Threading.Tasks;
 using Sigil;
 using Sigil.NonGeneric;
 using StackExchange.Redis;
@@ -56,6 +56,9 @@ namespace RedisStore
         public static MethodInfo HashIncrement = typeof (IDatabase).GetMethod("HashIncrement", new[] {typeof (RedisKey), typeof (RedisValue), typeof (long), typeof (CommandFlags)});
         public static MethodInfo HashGet = typeof(IDatabase).GetMethod("HashGet", new[] { typeof(RedisKey), typeof(RedisValue), typeof(CommandFlags) });
         public static MethodInfo HashSet = typeof(IDatabase).GetMethod("HashSet", new[] { typeof(RedisKey), typeof(RedisValue), typeof(RedisValue), typeof(When), typeof(CommandFlags) });
+        public static MethodInfo HashSetAsync = typeof (IDatabaseAsync).GetMethod("HashSetAsync", new[] {typeof (RedisKey), typeof (RedisValue), typeof (RedisValue), typeof (When), typeof (CommandFlags)});
+        public static MethodInfo HashGetAsync = typeof(IDatabaseAsync).GetMethod("HashGetAsync", new [] { typeof(RedisKey), typeof(RedisValue), typeof(CommandFlags) });
+
         public static MethodInfo EnumerableRange = typeof (Enumerable).GetMethod("Range", new[] {typeof (int), typeof (int)});
         public static MethodInfo EnumerableSelectGenericDefinition = typeof (Enumerable).GetMethods().First(o => o.Name == "Select" && o.GetParameters()[1].ParameterType.GetGenericArguments().Count() == 2);
 
@@ -88,6 +91,11 @@ namespace RedisStore
         public static MethodInfo ToEpochTime = typeof (InternalExtensions).GetMethod("ToEpochTime");
         public static MethodInfo ListRange = typeof (IDatabase).GetMethod("ListRange");
         public static MethodInfo SetMembers = typeof (IDatabase).GetMethod("SetMembers");
+
+        public static Func<Task<T>, U> FromTaskOfRedisValue<T, U>(Func<T, U> fromRedisValue)
+        {
+            return f => fromRedisValue(f.Result);
+        }
     }
 
     static class Implementer
@@ -168,6 +176,11 @@ namespace RedisStore
             return prop.Type.IsGenericType && prop.Type.GetGenericTypeDefinition().In(typeof (IRedisList<>), typeof (IRedisSet<>));
         }
 
+        static bool IsAsync(PropertyImplementationInfo prop)
+        {
+            return prop.Type.IsGenericType && prop.Type.GetGenericTypeDefinition() == typeof (Async<>);
+        }
+
         static void ImplementAllOtherProperties()
         {
             foreach (var prop in _implementationInfo.Properties.Where(o => o.Name != "Id"))
@@ -198,9 +211,54 @@ namespace RedisStore
                     getIl.StoreField(((Lazy<Type>) typeField.GetValue(null)).Value.GetField("Key"));
                     getIl.Return();
                 }
+                else if (IsAsync(prop))
+                {
+                    var fromRedisValue = typeof(FromRedisValue<>).MakeGenericType(prop.Type.GetGenericArguments()[0]);
+
+                    getIl.NewObject(typeof(Async<>).MakeGenericType(prop.Type.GetGenericArguments()[0]));
+                    getIl.Duplicate();
+
+                    getIl.Call(Methods.GetDatabase);
+                    getIl.LoadConstant(_implementationInfo.HashName);
+
+                    //Key
+                    getIl.LoadArgument(0);
+                    getIl.LoadField(_idField);
+
+                    if (_idField.FieldType.IsValueType)
+                    {
+                        getIl.Box(_idField.FieldType);
+                    }
+
+                    getIl.Call(Methods.StringFormat);
+                    getIl.Call(Methods.StringToRedisKey);
+
+                    //Value
+                    getIl.LoadConstant(prop.Name.Replace("Async", ""));
+                    getIl.Call(Methods.StringToRedisValue);
+
+                    //Command Flags
+                    getIl.LoadConstant(0);
+
+                    //Call
+                    getIl.Call(Methods.HashGetAsync);
+
+                    getIl.LoadField(fromRedisValue.GetField("Implementation"));
+                    getIl.Call(typeof(Lazy<>).MakeGenericType(typeof(Func<,>).MakeGenericType(typeof(RedisValue), prop.Type.GetGenericArguments()[0])).GetMethod("get_Value"));
+                    getIl.Call(typeof (Methods).GetMethod("FromTaskOfRedisValue").MakeGenericMethod(typeof (RedisValue), prop.Type.GetGenericArguments()[0]));
+                    getIl.Call(typeof (Task<RedisValue>)
+                        .GetMethods()
+                        .Single(o => o.GetParameters().Count() == 1 && o.IsGenericMethod && o.DeclaringType.IsGenericType)
+                        .MakeGenericMethod(prop.Type.GetGenericArguments()[0]));
+                    //getIl.Call(typeof (Task<RedisValue>).GetMethod("ContinueWith", new[] { typeof (Func<,>).MakeGenericType(typeof (Task<RedisValue>), prop.Type.GetGenericArguments()[0]) }));
+                    getIl.StoreField(prop.Type.GetField("_task"));
+
+                    getIl.Return();
+                }
                 else
                 {
                     var fromRedisValue = typeof (FromRedisValue<>).MakeGenericType(prop.Type);
+
                     getIl.LoadField(fromRedisValue.GetField("Implementation"));
                     getIl.Call(typeof (Lazy<>).MakeGenericType(typeof (Func<,>).MakeGenericType(typeof (RedisValue), prop.Type)).GetMethod("get_Value"));
 
@@ -236,11 +294,43 @@ namespace RedisStore
 
                 var setIl = Emit.BuildInstanceMethod(typeof (void), new[] {prop.Type}, _tb, $"set_{prop.Name}", Implementer.MethodAttributes);
 
-                
-
-                if (prop.Type.IsGenericType && prop.Type.GetGenericTypeDefinition().In(typeof(IRedisList<>), typeof(IRedisSet<>)))
+                if (IsRedisCollection(prop))
                 {
                     setIl.Return(); //NOP.
+                }
+                else if (IsAsync(prop))
+                {
+                    setIl.LoadArgument(1);
+
+                    setIl.Call(Methods.GetDatabase);
+                    setIl.LoadConstant(_implementationInfo.HashName);
+                    setIl.LoadArgument(0);
+                    setIl.LoadField(_idField);
+                    if (_idField.FieldType.IsValueType)
+                    {
+                        setIl.Box(_idField.FieldType);
+                    }
+
+                    setIl.Call(Methods.StringFormat);
+                    setIl.Call(Methods.StringToRedisKey);
+                    setIl.LoadConstant(prop.Name.Replace("Async", ""));
+                    setIl.Call(Methods.StringToRedisValue);
+
+                    var toRedisValue = typeof(ToRedisValue<>).MakeGenericType(prop.Type.GetGenericArguments()[0]);
+                    var impl = toRedisValue.GetField("Implementation");
+                    var invoke = (MethodInfo)toRedisValue.GetField("Invoke").GetValue(null);
+
+                    setIl.LoadField(impl);
+                    setIl.LoadArgument(1);
+                    setIl.LoadField(prop.Type.GetField("_setValue"));
+                    setIl.Call(invoke);
+
+                    setIl.LoadConstant(0);
+                    setIl.LoadConstant(0);
+                    setIl.Call(Methods.HashSetAsync);
+                    setIl.StoreField(prop.Type.GetField("_setTask"));
+
+                    setIl.Return();
                 }
                 else
                 {
