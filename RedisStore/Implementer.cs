@@ -323,31 +323,6 @@ namespace RedisStore
                 il.StoreField(idField);
             }
 
-            il.LoadLocal(db);
-
-            il.LoadConstant(_implementationInfo.HashName);
-            il.LoadLocal(result);
-            il.LoadField(idField);
-
-            if (idField.FieldType.IsValueType)
-            {
-                il.Box(idField.FieldType);
-            }
-            
-            il.Call(Methods.StringFormat);
-            il.Call(Methods.StringToRedisKey);
-
-            il.LoadConstant("Created");
-            il.Call(Methods.StringToRedisValue);
-            il.Call(Methods.DateTimeUtcNow);
-            il.Call(Methods.ToEpochTime);
-            il.Call(Methods.LongToRedisValue);
-            il.LoadConstant(0);
-            il.LoadConstant(0);
-            il.Call(Methods.HashSet);
-
-            il.Pop();
-
             il.LoadLocal(result);
             il.Return();
 
