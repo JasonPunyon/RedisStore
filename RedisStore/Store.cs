@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using StackExchange.Redis;
 
 namespace RedisStore
@@ -24,6 +25,11 @@ namespace RedisStore
             {
                 throw ex.InnerException;
             }
+        }
+
+        public static Task<T> CreateAsync<T>(object key = null)
+        {
+            return Implementer<T>.CreateAsync.Value(key);
         }
 
         public static T Get<T>(object id)

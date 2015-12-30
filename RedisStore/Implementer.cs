@@ -4,6 +4,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Sigil;
 using Sigil.NonGeneric;
@@ -54,6 +55,7 @@ namespace RedisStore
         public static MethodInfo RedisValueToLong = typeof(RedisValue).GetMethods().First(o => o.Name == "op_Explicit" && o.ReturnType == typeof(long));
 
         public static MethodInfo HashIncrement = typeof (IDatabase).GetMethod("HashIncrement", new[] {typeof (RedisKey), typeof (RedisValue), typeof (long), typeof (CommandFlags)});
+        public static MethodInfo HashIncrementAsync = typeof(IDatabaseAsync).GetMethod("HashIncrementAsync", new [] { typeof(RedisKey), typeof(RedisValue), typeof(long), typeof(CommandFlags)});
         public static MethodInfo HashGet = typeof(IDatabase).GetMethod("HashGet", new[] { typeof(RedisKey), typeof(RedisValue), typeof(CommandFlags) });
         public static MethodInfo HashSet = typeof(IDatabase).GetMethod("HashSet", new[] { typeof(RedisKey), typeof(RedisValue), typeof(RedisValue), typeof(When), typeof(CommandFlags) });
         public static MethodInfo HashSetAsync = typeof (IDatabaseAsync).GetMethod("HashSetAsync", new[] {typeof (RedisKey), typeof (RedisValue), typeof (RedisValue), typeof (When), typeof (CommandFlags)});
@@ -61,6 +63,14 @@ namespace RedisStore
 
         public static MethodInfo EnumerableRange = typeof (Enumerable).GetMethod("Range", new[] {typeof (int), typeof (int)});
         public static MethodInfo EnumerableSelectGenericDefinition = typeof (Enumerable).GetMethods().First(o => o.Name == "Select" && o.GetParameters()[1].ParameterType.GetGenericArguments().Count() == 2);
+
+        public static MethodInfo ContinueWith<TIn>(Type TResult)
+        {
+            return typeof (Task<TIn>)
+                .GetMethods()
+                .Single(o => o.GetParameters().Count() == 1 && o.IsGenericMethod && o.DeclaringType.IsGenericType)
+                .MakeGenericMethod(TResult);
+        }
 
         public static MethodInfo EnumerableSelect<T, TResult>()
         {
@@ -96,6 +106,11 @@ namespace RedisStore
         {
             return f => fromRedisValue(f.Result);
         }
+
+        public static MethodInfo TaskFromResult<T>()
+        {
+            return typeof (Task).GetMethod("FromResult").MakeGenericMethod(typeof (T));
+        }
     }
 
     static class Implementer
@@ -124,6 +139,7 @@ namespace RedisStore
         public static Type ImplementedType => _implementedType.Value;
 
         public static readonly Lazy<Func<object, TInterface>> Create = new Lazy<Func<object, TInterface>>(ImplementCreate);
+        public static readonly Lazy<Func<object, Task<TInterface>>> CreateAsync = new Lazy<Func<object, Task<TInterface>>>(ImplementCreateAsync);
         public static readonly Lazy<Func<object, TInterface>> Get = new Lazy<Func<object, TInterface>>(ImplementGet);
         public static readonly Lazy<Func<IEnumerable<TInterface>>> Enumerate = new Lazy<Func<IEnumerable<TInterface>>>(ImplementEnumerate);
 
@@ -246,11 +262,7 @@ namespace RedisStore
                     getIl.LoadField(fromRedisValue.GetField("Implementation"));
                     getIl.Call(typeof(Lazy<>).MakeGenericType(typeof(Func<,>).MakeGenericType(typeof(RedisValue), prop.Type.GetGenericArguments()[0])).GetMethod("get_Value"));
                     getIl.Call(typeof (Methods).GetMethod("FromTaskOfRedisValue").MakeGenericMethod(typeof (RedisValue), prop.Type.GetGenericArguments()[0]));
-                    getIl.Call(typeof (Task<RedisValue>)
-                        .GetMethods()
-                        .Single(o => o.GetParameters().Count() == 1 && o.IsGenericMethod && o.DeclaringType.IsGenericType)
-                        .MakeGenericMethod(prop.Type.GetGenericArguments()[0]));
-                    //getIl.Call(typeof (Task<RedisValue>).GetMethod("ContinueWith", new[] { typeof (Func<,>).MakeGenericType(typeof (Task<RedisValue>), prop.Type.GetGenericArguments()[0]) }));
+                    getIl.Call(Methods.ContinueWith<RedisValue>(prop.Type.GetGenericArguments()[0]));
                     getIl.StoreField(prop.Type.GetField("_task"));
 
                     getIl.Return();
@@ -415,6 +427,79 @@ namespace RedisStore
 
             il.LoadLocal(result);
             il.Return();
+
+            return il.CreateDelegate();
+        }
+
+        public static Func<Task<long>, TInterface> Continuation; 
+
+        static Func<object, Task<TInterface>> ImplementCreateAsync()
+        {
+            var il = Emit<Func<object, Task<TInterface>>>.NewDynamicMethod();
+            var result = il.DeclareLocal(ImplementedType);
+            var db = il.DeclareLocal<IDatabase>();
+
+            var idField = ImplementedType.GetField("_id");
+
+            il.Call(Methods.GetDatabase);
+            il.StoreLocal(db);
+
+            //Only if id is an int.
+            if (_implementationInfo.IdType == typeof(int))
+            {
+                var doIt = Emit<Func<Task<long>, TInterface>>.NewDynamicMethod();
+                doIt.NewObject(ImplementedType);
+                doIt.Duplicate();
+                doIt.LoadArgument(0);
+                doIt.Call(typeof (Task<long>).GetMethod("get_Result"));
+                doIt.Convert<int>();
+                doIt.StoreField(idField);
+                doIt.Return();
+                Continuation = doIt.CreateDelegate();
+
+                il.LoadLocal(db);
+                il.LoadConstant("TypeCounters");
+                il.Call(Methods.StringToRedisKey);
+                il.LoadConstant(_tInterface.Name);
+                il.Call(Methods.StringToRedisValue);
+                il.LoadConstant(1L);
+                il.LoadConstant(0);
+                il.Call(Methods.HashIncrementAsync);
+                il.LoadField(typeof (Implementer<TInterface>).GetField("Continuation"));
+                il.Call(Methods.ContinueWith<long>(typeof (TInterface)));
+
+                il.Return();
+            }
+            else if (idField.FieldType == typeof(string))
+            {
+                il.NewObject(ImplementedType);
+                il.StoreLocal(result);
+                
+                il.LoadLocal(result);
+                il.LoadArgument(0);
+                il.CastClass<string>();
+
+                il.StoreField(idField);
+                il.LoadLocal(result);
+                il.Call(Methods.TaskFromResult<TInterface>());
+
+                il.Return();
+            }
+            else
+            {
+                il.NewObject(ImplementedType);
+                il.StoreLocal(result);
+
+                il.LoadLocal(result);
+                il.LoadArgument(0);
+                il.UnboxAny(idField.FieldType);
+                il.StoreField(idField);
+
+                il.LoadLocal(result);
+                il.Call(Methods.TaskFromResult<TInterface>());
+
+                il.Return();
+            }
 
             return il.CreateDelegate();
         }
