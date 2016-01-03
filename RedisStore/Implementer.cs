@@ -4,7 +4,6 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
-using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Sigil;
 using Sigil.NonGeneric;
@@ -263,7 +262,7 @@ namespace RedisStore
                     getIl.Call(typeof(Lazy<>).MakeGenericType(typeof(Func<,>).MakeGenericType(typeof(RedisValue), prop.Type.GetGenericArguments()[0])).GetMethod("get_Value"));
                     getIl.Call(typeof (Methods).GetMethod("FromTaskOfRedisValue").MakeGenericMethod(typeof (RedisValue), prop.Type.GetGenericArguments()[0]));
                     getIl.Call(Methods.ContinueWith<RedisValue>(prop.Type.GetGenericArguments()[0]));
-                    getIl.StoreField(prop.Type.GetField("_task"));
+                    getIl.StoreField(prop.Type.GetField("_task", BindingFlags.NonPublic | BindingFlags.Instance));
 
                     getIl.Return();
                 }
@@ -334,13 +333,13 @@ namespace RedisStore
 
                     setIl.LoadField(impl);
                     setIl.LoadArgument(1);
-                    setIl.LoadField(prop.Type.GetField("_setValue"));
+                    setIl.LoadField(prop.Type.GetField("_setValue", BindingFlags.NonPublic | BindingFlags.Instance));
                     setIl.Call(invoke);
 
                     setIl.LoadConstant(0);
                     setIl.LoadConstant(0);
                     setIl.Call(Methods.HashSetAsync);
-                    setIl.StoreField(prop.Type.GetField("_setTask"));
+                    setIl.StoreField(prop.Type.GetField("_setTask", BindingFlags.NonPublic | BindingFlags.Instance));
 
                     setIl.Return();
                 }
