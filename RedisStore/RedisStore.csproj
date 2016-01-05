@@ -69,6 +69,7 @@
     <Compile Include="ShittyGlobalClass.cs" />
     <Compile Include="ToRedisKey.cs" />
     <Compile Include="ToRedisValue.cs" />
+    <Compile Include="UniqueConstraintAttribute.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

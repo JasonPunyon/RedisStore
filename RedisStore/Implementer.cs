@@ -4,6 +4,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Sigil;
 using Sigil.NonGeneric;
@@ -37,6 +38,7 @@ namespace RedisStore
         public Type DeclaringType => _prop.DeclaringType;
         public Type Type => _prop.PropertyType;
         public string Name => _prop.Name;
+        public bool HasUniqueConstraint => _prop.GetCustomAttribute<UniqueConstraintAttribute>() != null;
     }
 
     public static class Methods
@@ -311,68 +313,154 @@ namespace RedisStore
                 }
                 else if (IsAsync(prop))
                 {
-                    setIl.LoadArgument(1);
-
-                    setIl.Call(Methods.GetDatabase);
-                    setIl.LoadConstant(_implementationInfo.HashName);
-                    setIl.LoadArgument(0);
-                    setIl.LoadField(_idField);
-                    if (_idField.FieldType.IsValueType)
+                    if (prop.HasUniqueConstraint)
                     {
-                        setIl.Box(_idField.FieldType);
+                        setIl.LoadArgument(1);
+                        setIl.LoadConstant(_implementationInfo.HashName);
+                        setIl.LoadArgument(0);
+                        setIl.LoadField(_idField);
+
+                        if (_idField.FieldType.IsValueType)
+                        {
+                            setIl.Box(_idField.FieldType);
+                        }
+
+                        setIl.Call(Methods.StringFormat);
+                        setIl.Call(Methods.StringToRedisKey);
+                        setIl.LoadConstant(prop.Name.Replace("Async", ""));
+                        setIl.Call(Methods.StringToRedisValue);
+
+                        var toRedisValue = typeof(ToRedisValue<>).MakeGenericType(prop.Type.GetGenericArguments()[0]);
+                        var impl = toRedisValue.GetField("Implementation");
+                        var invoke = (MethodInfo)toRedisValue.GetField("Invoke").GetValue(null);
+
+                        setIl.LoadField(impl);
+                        setIl.LoadArgument(1);
+                        setIl.LoadField(prop.Type.GetField("_setValue", BindingFlags.NonPublic | BindingFlags.Instance));
+                        setIl.Call(invoke);
+
+                        setIl.LoadConstant($"/{_implementationInfo.ImplementedTypeName}/{prop.Name}_UC");
+                        setIl.LoadArgument(0);
+                        setIl.LoadField(_idField);
+
+                        if (_idField.FieldType.IsValueType)
+                        {
+                            setIl.Box(_idField.FieldType);
+                        }
+
+                        setIl.Call(Methods.StringFormat);
+                        setIl.Call(Methods.StringToRedisKey);
+                        setIl.Call(typeof(UniqueConstraintAttribute).GetMethod("SetUniqueValAsync", BindingFlags.Static | BindingFlags.NonPublic));
+                        setIl.StoreField(prop.Type.GetField("_setTask", BindingFlags.NonPublic | BindingFlags.Instance));
+
+                        setIl.Return();
                     }
+                    else
+                    {
+                        setIl.LoadArgument(1);
 
-                    setIl.Call(Methods.StringFormat);
-                    setIl.Call(Methods.StringToRedisKey);
-                    setIl.LoadConstant(prop.Name.Replace("Async", ""));
-                    setIl.Call(Methods.StringToRedisValue);
+                        setIl.Call(Methods.GetDatabase);
+                        setIl.LoadConstant(_implementationInfo.HashName);
+                        setIl.LoadArgument(0);
+                        setIl.LoadField(_idField);
+                        if (_idField.FieldType.IsValueType)
+                        {
+                            setIl.Box(_idField.FieldType);
+                        }
 
-                    var toRedisValue = typeof(ToRedisValue<>).MakeGenericType(prop.Type.GetGenericArguments()[0]);
-                    var impl = toRedisValue.GetField("Implementation");
-                    var invoke = (MethodInfo)toRedisValue.GetField("Invoke").GetValue(null);
+                        setIl.Call(Methods.StringFormat);
+                        setIl.Call(Methods.StringToRedisKey);
+                        setIl.LoadConstant(prop.Name.Replace("Async", ""));
+                        setIl.Call(Methods.StringToRedisValue);
 
-                    setIl.LoadField(impl);
-                    setIl.LoadArgument(1);
-                    setIl.LoadField(prop.Type.GetField("_setValue", BindingFlags.NonPublic | BindingFlags.Instance));
-                    setIl.Call(invoke);
+                        var toRedisValue = typeof(ToRedisValue<>).MakeGenericType(prop.Type.GetGenericArguments()[0]);
+                        var impl = toRedisValue.GetField("Implementation");
+                        var invoke = (MethodInfo)toRedisValue.GetField("Invoke").GetValue(null);
 
-                    setIl.LoadConstant(0);
-                    setIl.LoadConstant(0);
-                    setIl.Call(Methods.HashSetAsync);
-                    setIl.StoreField(prop.Type.GetField("_setTask", BindingFlags.NonPublic | BindingFlags.Instance));
+                        setIl.LoadField(impl);
+                        setIl.LoadArgument(1);
+                        setIl.LoadField(prop.Type.GetField("_setValue", BindingFlags.NonPublic | BindingFlags.Instance));
+                        setIl.Call(invoke);
 
-                    setIl.Return();
+                        setIl.LoadConstant(0);
+                        setIl.LoadConstant(0);
+                        setIl.Call(Methods.HashSetAsync);
+                        setIl.StoreField(prop.Type.GetField("_setTask", BindingFlags.NonPublic | BindingFlags.Instance));
+
+                        setIl.Return();
+                    }
                 }
                 else
                 {
-                    setIl.Call(Methods.GetDatabase);
-                    setIl.LoadConstant(_implementationInfo.HashName);
-                    setIl.LoadArgument(0);
-                    setIl.LoadField(_idField);
-
-                    if (_idField.FieldType.IsValueType)
+                    if (prop.HasUniqueConstraint)
                     {
-                        setIl.Box(_idField.FieldType);
+                        setIl.LoadConstant(_implementationInfo.HashName);
+                        setIl.LoadArgument(0);
+                        setIl.LoadField(_idField);
+
+                        if (_idField.FieldType.IsValueType)
+                        {
+                            setIl.Box(_idField.FieldType);
+                        }
+
+                        setIl.Call(Methods.StringFormat);
+                        setIl.Call(Methods.StringToRedisKey);
+                        setIl.LoadConstant(prop.Name);
+                        setIl.Call(Methods.StringToRedisValue);
+
+                        var toRedisValue = typeof(ToRedisValue<>).MakeGenericType(prop.Type);
+                        var impl = toRedisValue.GetField("Implementation");
+                        var invoke = (MethodInfo)toRedisValue.GetField("Invoke").GetValue(null);
+
+                        setIl.LoadField(impl);
+                        setIl.LoadArgument(1);
+                        setIl.Call(invoke);
+
+                        setIl.LoadConstant($"/{_implementationInfo.ImplementedTypeName}/{prop.Name}_UC");
+                        setIl.LoadArgument(0);
+                        setIl.LoadField(_idField);
+
+                        if (_idField.FieldType.IsValueType)
+                        {
+                            setIl.Box(_idField.FieldType);
+                        }
+
+                        setIl.Call(Methods.StringFormat);
+                        setIl.Call(Methods.StringToRedisKey);
+                        setIl.Call(typeof (UniqueConstraintAttribute).GetMethod("SetUniqueVal", BindingFlags.Static | BindingFlags.NonPublic));
+                        setIl.Return();
                     }
+                    else
+                    {
+                        setIl.Call(Methods.GetDatabase);
+                        setIl.LoadConstant(_implementationInfo.HashName);
+                        setIl.LoadArgument(0);
+                        setIl.LoadField(_idField);
 
-                    setIl.Call(Methods.StringFormat);
-                    setIl.Call(Methods.StringToRedisKey);
-                    setIl.LoadConstant(prop.Name);
-                    setIl.Call(Methods.StringToRedisValue);
+                        if (_idField.FieldType.IsValueType)
+                        {
+                            setIl.Box(_idField.FieldType);
+                        }
 
-                    var toRedisValue = typeof(ToRedisValue<>).MakeGenericType(prop.Type);
-                    var impl = toRedisValue.GetField("Implementation");
-                    var invoke = (MethodInfo)toRedisValue.GetField("Invoke").GetValue(null);
+                        setIl.Call(Methods.StringFormat);
+                        setIl.Call(Methods.StringToRedisKey);
+                        setIl.LoadConstant(prop.Name);
+                        setIl.Call(Methods.StringToRedisValue);
 
-                    setIl.LoadField(impl);
-                    setIl.LoadArgument(1);
-                    setIl.Call(invoke);
+                        var toRedisValue = typeof(ToRedisValue<>).MakeGenericType(prop.Type);
+                        var impl = toRedisValue.GetField("Implementation");
+                        var invoke = (MethodInfo)toRedisValue.GetField("Invoke").GetValue(null);
 
-                    setIl.LoadConstant(0);
-                    setIl.LoadConstant(0);
-                    setIl.Call(Methods.HashSet);
-                    setIl.Pop();
-                    setIl.Return();
+                        setIl.LoadField(impl);
+                        setIl.LoadArgument(1);
+                        setIl.Call(invoke);
+
+                        setIl.LoadConstant(0);
+                        setIl.LoadConstant(0);
+                        setIl.Call(Methods.HashSet);
+                        setIl.Pop();
+                        setIl.Return();
+                    }
                 }
 
                 p.SetSetMethod(setIl.CreateMethod());

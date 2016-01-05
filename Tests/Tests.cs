@@ -1,7 +1,5 @@
 using System;
 using System.Linq;
-using System.Runtime.CompilerServices;
-using System.Threading;
 using System.Threading.Tasks;
 using NUnit.Framework;
 using RedisStore;
@@ -297,6 +295,100 @@ namespace Tests
             a.Score = 100;
             Console.WriteLine(await a.Score);
         }
+
+        [Test]
+        public static void UniqueConstraint()
+        {
+            var u1 = Store.Create<IUniqueUser>();
+            u1.Email = "email@example.com";
+
+            var u2 = Store.Create<IUniqueUser>();
+            u2.Email = "email1@example.com";
+            u2.Email = "email1@example.com";
+
+            u1.Email = "email2@example.com";
+            u2.Email = "email@example.com";
+        }
+
+        [Test]
+        public static async Task AsyncUniqueConstraint()
+        {
+            var u1 = Store.Create<IUniqueUser>();
+            var u2 = Store.Create<IUniqueUser>();
+
+            await Task.WhenAll(
+                    u1.EmailAsync = "email@example.com",
+                    u2.EmailAsync = "email1@example.com",
+                    u2.EmailAsync = "email1@example.com",
+                    u1.EmailAsync = "email2@example.com",
+                    u2.EmailAsync = "email@example.com"
+                );
+        }
+
+        [Test]
+        [ExpectedException(typeof(UniqueConstraintViolatedException))]
+        public static void StringUniqueConstraintFail()
+        {
+            var u1 = Store.Create<IUniqueUser>();
+            var u2 = Store.Create<IUniqueUser>();
+            u1.Email = "Hello";
+            u2.Email = "Hello";
+        }
+
+        [Test]
+        [ExpectedException(typeof(UniqueConstraintViolatedException))]
+        public static async Task AsyncStringUniqueConstraintFail()
+        {
+            var u1 = Store.Create<IUniqueUser>();
+            var u2 = Store.Create<IUniqueUser>();
+            await (Task)(u1.EmailAsync = "Hello");
+            await (Task)(u2.EmailAsync = "Hello");
+        }
+
+        [Test]
+        [ExpectedException(typeof(UniqueConstraintViolatedException))]
+        public static void DoubleUniqueConstraintFail()
+        {
+            var u1 = Store.Create<IUniqueUser>();
+            var u2 = Store.Create<IUniqueUser>();
+            u1.SomeValue = 3.0;
+            u2.SomeValue = 3.0;
+        }
+
+        [Test]
+        [ExpectedException(typeof(UniqueConstraintViolatedException))]
+        public static void RelatedUniqueConstraintFail()
+        {
+            var u1 = Store.Create<IUniqueUser>();
+            var u2 = Store.Create<IUniqueUser>();
+            var blah = Store.Create<IRelatedToUnique>();
+            blah.SomeData = "YUP YUP";
+            u1.Related = blah;
+            u2.Related = blah;
+        }
+    }
+
+    public interface IUniqueUser
+    {
+        int Id { get; }
+
+        [UniqueConstraint]
+        string Email { get; set; }
+
+        [UniqueConstraint]
+        Async<string> EmailAsync { get; set; }
+
+        [UniqueConstraint]
+        double SomeValue { get; set; }
+
+        [UniqueConstraint]
+        IRelatedToUnique Related { get; set; }
+    }
+
+    public interface IRelatedToUnique
+    {
+        int Id { get; }
+        string SomeData { get; set; }
     }
 
     public interface ISOTag
