@@ -49,6 +49,52 @@ end
         }
     }
 
+    public class UniqueIndexAttribute : Attribute
+    {
+        internal static LuaScript Script = LuaScript.Prepare(@"
+local currentVal = redis.call('hget', @hashKey, @hashField)
+if currentVal == @finalVal then
+    return 1
+end
+
+if redis.call('hexists', @indexKey, @finalVal) == 0 then
+    redis.call('hdel', @indexKey, currentVal)
+    redis.call('hset', @indexKey, @finalVal, @id)
+    redis.call('hset', @hashKey, @hashField, @finalVal)
+    return 1
+else 
+    return 0
+end
+");
+
+        internal static void SetUniqueVal(RedisKey hashKey, RedisValue hashField, RedisValue value, RedisKey indexKey, RedisValue id)
+        {
+            var result = Store.Database.ScriptEvaluate(Script, new {  hashKey, hashField, finalVal = value, indexKey, id });
+            if ((bool) result)
+            {
+                return;
+            }
+
+            throw new UniqueConstraintViolatedException();
+        }
+
+        internal static Task SetUniqueValAsync(RedisKey hashKey, RedisValue hashField, RedisValue value,
+            RedisKey indexKey, RedisValue id)
+        {
+            return Store.Database
+                .ScriptEvaluateAsync(Script, new { hashKey, hashField, finalVal = value, indexKey })
+                .ContinueWith(r =>
+                {
+                    if ((bool)r.Result)
+                    {
+                        return;
+                    }
+
+                    throw new UniqueConstraintViolatedException();
+                });
+        }
+    }
+
     public class UniqueConstraintViolatedException : Exception
     {
 

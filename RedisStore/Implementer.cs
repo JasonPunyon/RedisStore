@@ -4,7 +4,6 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
-using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Sigil;
 using Sigil.NonGeneric;
@@ -39,6 +38,7 @@ namespace RedisStore
         public Type Type => _prop.PropertyType;
         public string Name => _prop.Name;
         public bool HasUniqueConstraint => _prop.GetCustomAttribute<UniqueConstraintAttribute>() != null;
+        public bool HasUniqueIndex => _prop.GetCustomAttribute<UniqueIndexAttribute>() != null;
     }
 
     public static class Methods
@@ -392,7 +392,55 @@ namespace RedisStore
                 }
                 else
                 {
-                    if (prop.HasUniqueConstraint)
+                    if (prop.HasUniqueIndex)
+                    {
+                        setIl.LoadConstant(_implementationInfo.HashName);
+                        setIl.LoadArgument(0);
+                        setIl.LoadField(_idField);
+
+                        if (_idField.FieldType.IsValueType)
+                        {
+                            setIl.Box(_idField.FieldType);
+                        }
+
+                        setIl.Call(Methods.StringFormat);
+                        setIl.Call(Methods.StringToRedisKey);
+                        setIl.LoadConstant(prop.Name);
+                        setIl.Call(Methods.StringToRedisValue);
+
+                        var toRedisValue = typeof(ToRedisValue<>).MakeGenericType(prop.Type);
+                        var impl = toRedisValue.GetField("Implementation");
+                        var invoke = (MethodInfo)toRedisValue.GetField("Invoke").GetValue(null);
+
+                        setIl.LoadField(impl);
+                        setIl.LoadArgument(1);
+                        setIl.Call(invoke);
+
+                        setIl.LoadConstant($"/{_implementationInfo.ImplementedTypeName}/{prop.Name}_UIx");
+                        setIl.LoadArgument(0);
+                        setIl.LoadField(_idField);
+
+                        if (_idField.FieldType.IsValueType)
+                        {
+                            setIl.Box(_idField.FieldType);
+                        }
+
+                        setIl.Call(Methods.StringFormat);
+                        setIl.Call(Methods.StringToRedisKey);
+
+                        var idToRedisValue = typeof (ToRedisValue<>).MakeGenericType(_implementationInfo.IdType);
+                        var idImpl = idToRedisValue.GetField("Implementation");
+                        var idInvoke = (MethodInfo) idToRedisValue.GetField("Invoke").GetValue(null);
+
+                        setIl.LoadField(idImpl);
+                        setIl.LoadArgument(0);
+                        setIl.LoadField(_idField);
+                        setIl.Call(idInvoke);
+
+                        setIl.Call(typeof(UniqueIndexAttribute).GetMethod("SetUniqueVal", BindingFlags.Static | BindingFlags.NonPublic));
+                        setIl.Return();
+                    }
+                    else if (prop.HasUniqueConstraint)
                     {
                         setIl.LoadConstant(_implementationInfo.HashName);
                         setIl.LoadArgument(0);

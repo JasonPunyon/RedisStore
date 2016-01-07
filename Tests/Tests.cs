@@ -366,6 +366,35 @@ namespace Tests
             u1.Related = blah;
             u2.Related = blah;
         }
+
+        [Test]
+        public static void UniqueIndex()
+        {
+            var u1 = Store.Create<IUniqueUser>();
+            u1.IndexedEmail = "email1@example.com";
+            u1.IndexedInteger = 101;
+            var u2 = Store.Create<IUniqueUser>();
+            u2.IndexedEmail = "email2@example.com";
+            u2.IndexedInteger = 102;
+
+            var gotIt = Store.IndexQuery<IUniqueUser>(o => o.IndexedEmail == "email1@example.com").Single();
+            Console.WriteLine(gotIt.IndexedEmail);
+            Console.WriteLine(gotIt.Id);
+
+            var gotInt = Store.IndexQuery<IUniqueUser>(o => o.IndexedInteger == 102).Single();
+            Console.WriteLine(gotInt.IndexedEmail);
+            Console.WriteLine(gotInt.Id);
+
+            var val = "email2@example.com";
+            var gotItAgain = Store.IndexQuery<IUniqueUser>(o => o.IndexedEmail == val).Single();
+            Console.WriteLine(gotItAgain.IndexedEmail);
+            Console.WriteLine(gotItAgain.Id);
+
+            var valInt = 101;
+            var gotIntAgain = Store.IndexQuery<IUniqueUser>(o => o.IndexedInteger == valInt).Single();
+            Console.WriteLine(gotIntAgain.IndexedEmail);
+            Console.WriteLine(gotIntAgain.Id);
+        }
     }
 
     public interface IUniqueUser
@@ -383,6 +412,12 @@ namespace Tests
 
         [UniqueConstraint]
         IRelatedToUnique Related { get; set; }
+
+        [UniqueIndex]
+        string IndexedEmail { get; set; }
+
+        [UniqueIndex]
+        int IndexedInteger { get; set; }
     }
 
     public interface IRelatedToUnique
