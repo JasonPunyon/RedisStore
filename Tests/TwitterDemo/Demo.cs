@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using NUnit.Framework;
 using RedisStore;
 using StackExchange.Redis;
@@ -9,7 +8,10 @@ namespace Tests.TwitterDemo
 {
     public interface IUser
     {
-        string Id { get; }
+        int Id { get; }
+
+        [UniqueIndex]
+        string Handle { get; set; }
         string DisplayName { get; set; }
         IRedisSet<ITweet> Tweets { get; set; } 
 
@@ -38,11 +40,11 @@ namespace Tests.TwitterDemo
             Store.Connection.GetServer(Store.Connection.GetEndPoints()[0]).FlushAllDatabases();
 
             var jason = SignUp("JasonPunyon", "JSONP");
-            Console.WriteLine(jason.Id);
+            Console.WriteLine(jason.Handle);
             Console.WriteLine(jason.DisplayName);
 
             var codinghorror = SignUp("codinghorror", "Jeff Atwood");
-            Console.WriteLine(codinghorror.Id);
+            Console.WriteLine(codinghorror.Handle);
             Console.WriteLine(codinghorror.DisplayName);
 
             var jasonsGreatTweet = jason.Tweet("Isn't twitter just the greatest?");
@@ -54,7 +56,8 @@ namespace Tests.TwitterDemo
 
         public static IUser SignUp(string handle, string displayName)
         {
-            var u = Store.Create<IUser>(handle);
+            var u = Store.Create<IUser>();
+            u.Handle = handle;
             u.DisplayName = displayName;
             return u;
         }
